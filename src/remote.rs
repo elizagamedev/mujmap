@@ -111,7 +111,10 @@ impl HttpWrapper {
             .set("Authorization", &self.authorization)
             .call()
             .context(ReadEmailBlobSnafu {})?
-            .into_reader())
+            .into_reader()
+            // Limiting download size as advised by ureq's documentation:
+            // https://docs.rs/ureq/latest/ureq/struct.Response.html#method.into_reader
+            .take(10_000_000))
     }
 
     fn post<S: Serialize, D: DeserializeOwned>(&self, url: &str, body: S) -> Result<D> {
@@ -369,17 +372,14 @@ impl Remote {
         &mut self,
         state: State,
         email_ids: &HashSet<jmap::Id>,
-        chunk_size: usize,
     ) -> Result<(State, HashMap<Id, Email>)> {
         const GET_METHOD_ID: &str = "0";
 
         info!("Retrieving metadata...");
 
         let pb = ProgressBar::new(email_ids.len() as u64);
+        let chunk_size = self.session.capabilities.core.max_objects_in_get as usize;
 
-        // We could request all of the `Email`s at once, but Fastmail chokes
-        // with a `serverFail` error if the request contains thousands of IDs.
-        // Therefore we must process in chunks.
         let mut emails: HashMap<Id, Email> = HashMap::new();
         let mut state = state;
 

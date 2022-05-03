@@ -1,4 +1,5 @@
 use crate::jmap;
+use const_format::formatcp;
 use lazy_static::lazy_static;
 use log::debug;
 use notmuch::Database;
@@ -13,6 +14,9 @@ use std::fs;
 use std::io;
 use std::path::Path;
 use std::path::PathBuf;
+
+const ID_PATTERN: &'static str = r"[-A-Za-z0-9_]+";
+const MAIL_PATTERN: &'static str = formatcp!(r"^({})\.({})(?:$|:)", ID_PATTERN, ID_PATTERN);
 
 #[derive(Debug, Snafu)]
 pub enum Error {
@@ -35,9 +39,6 @@ pub enum Error {
     #[snafu(display("Could not create Maildir dir `{}': {}", path.to_string_lossy(), source))]
     CreateMaildirDir { path: PathBuf, source: io::Error },
 
-    #[snafu(display("Could not list files in maildir: {}", source))]
-    ListMailDirFiles { source: io::Error },
-
     #[snafu(display("Could not create notmuch query `{}': {}", query, source))]
     CreateNotmuchQuery {
         query: String,
@@ -57,10 +58,7 @@ pub struct Local {
     /// Notmuch database.
     db: Database,
     /// The path to mujmap's maildir/cur.
-    mail_cur_dir: PathBuf,
-    /// The path to mujmap's cache, where emails are downloaded before being
-    /// placed in the maildir.
-    cache_dir: PathBuf,
+    pub mail_cur_dir: PathBuf,
     /// Notmuch search query which searches for all mail in mujmap's maildir.
     all_mail_query: String,
     /// Is this a dry run?
@@ -71,11 +69,7 @@ impl Local {
     /// Open the local store.
     ///
     /// `mail_dir` *must* be a subdirectory of the notmuch path.
-    pub fn open(
-        mail_dir: impl AsRef<Path>,
-        cache_dir: impl AsRef<Path>,
-        dry_run: bool,
-    ) -> Result<Self> {
+    pub fn open(mail_dir: impl AsRef<Path>, dry_run: bool) -> Result<Self> {
         // Open the notmuch database with default config options.
         let db = Database::open_with_config::<PathBuf, PathBuf>(
             None,
@@ -113,7 +107,6 @@ impl Local {
         Ok(Self {
             db,
             mail_cur_dir,
-            cache_dir: cache_dir.as_ref().into(),
             all_mail_query,
             dry_run,
         })
@@ -122,12 +115,6 @@ impl Local {
     pub fn revision(&self) -> u64 {
         self.db.revision().revision
     }
-
-    // /// Return a map of JMAP `Email` IDs to `MailFile`s that we have stored in
-    // /// our maildir.
-    // pub fn all_mail_files(&self) -> Result<HashMap<jmap::Id, MailFile>> {
-    //     all_mail_files_in_dir(self.mail_cur_dir.as_path()).context(ListMailDirFilesSnafu {})
-    // }
 
     /// Return a map of all `Email` IDs to `Email` objects.
     pub fn all_email(&self) -> Result<HashMap<jmap::Id, Email>> {
@@ -176,11 +163,8 @@ pub struct Email {
 
 impl Email {
     fn from_message(message: Message) -> Option<Self> {
-        const ID_PATTERN: &'static str = r"[-A-Za-z0-9_]+";
         lazy_static! {
-            static ref MAIL_FILE: Regex =
-                Regex::new(format!(r"^({})\.({})(?:^|:)", ID_PATTERN, ID_PATTERN).as_str())
-                    .unwrap();
+            static ref MAIL_FILE: Regex = Regex::new(MAIL_PATTERN).unwrap();
         }
         message
             .filename()
@@ -199,29 +183,3 @@ impl Email {
             })
     }
 }
-
-// fn all_mail_files_in_dir(
-//     path: &Path,
-// ) -> std::result::Result<HashMap<jmap::Id, MailFile>, io::Error> {
-//     let mut mail_files = HashMap::new();
-//     for entry in fs::read_dir(path)? {
-//         let entry = entry?;
-//         if entry.file_type()?.is_dir() {
-//             continue;
-//         }
-
-//         let (id, blob_id) = match filename_to_ids(&entry.path()) {
-//             Some(x) => x,
-//             None => continue,
-//         };
-//         mail_files.insert(
-//             id.clone(),
-//             MailFile {
-//                 id,
-//                 blob_id,
-//                 path: entry.path(),
-//             },
-//         );
-//     }
-//     Ok(mail_files)
-// }

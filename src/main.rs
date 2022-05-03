@@ -1,18 +1,21 @@
 mod args;
+mod cache;
 mod config;
 mod jmap;
 mod local;
 mod remote;
 
 use args::Args;
+use cache::Cache;
 use clap::Parser;
 use config::Config;
-use directories::ProjectDirs;
+use indicatif::ProgressBar;
 use local::Local;
 use log::{info, warn};
+use rayon::{prelude::*, ThreadPoolBuildError};
 use remote::Remote;
 use serde::{Deserialize, Serialize};
-use snafu::{prelude::*, Whatever};
+use snafu::prelude::*;
 use std::collections::HashSet;
 use std::fs::File;
 use std::io::{self, BufReader};
@@ -20,6 +23,12 @@ use std::path::{Path, PathBuf};
 
 #[derive(Debug, Snafu)]
 pub enum Error {
+    #[snafu(display("Could not open config file: {}", source))]
+    OpenConfigFile { source: config::Error },
+
+    #[snafu(display("Could not get password from config: {}", source))]
+    GetPassword { source: config::Error },
+
     #[snafu(display("Could not read mujmore state file `{}': {}", filename.to_string_lossy(), source))]
     ReadStateFile {
         filename: PathBuf,
@@ -31,6 +40,33 @@ pub enum Error {
         filename: PathBuf,
         source: serde_json::Error,
     },
+
+    #[snafu(display("Could not open local database: {}", source))]
+    OpenLocal { source: local::Error },
+
+    #[snafu(display("Could not open local cache: {}", source))]
+    OpenCache { source: cache::Error },
+
+    #[snafu(display("Could not open remote session: {}", source))]
+    OpenRemote { source: remote::Error },
+
+    #[snafu(display("Could not index local email: {}", source))]
+    IndexLocalEmail { source: local::Error },
+
+    #[snafu(display("Could not index all remote email IDs for a full sync: {}", source))]
+    IndexRemoteEmail { source: remote::Error },
+
+    #[snafu(display("Could not retrieve email properties from remote: {}", source))]
+    GetRemoteEmails { source: remote::Error },
+
+    #[snafu(display("Could not create download thread pool: {}", source))]
+    CreateDownloadThreadPool { source: ThreadPoolBuildError },
+
+    #[snafu(display("Could not download email from remote: {}", source))]
+    DownloadRemoteEmail { source: remote::Error },
+
+    #[snafu(display("Could not save email to cache: {}", source))]
+    CacheNewEmail { source: cache::Error },
 }
 
 pub type Result<T, E = Error> = std::result::Result<T, E>;
@@ -60,7 +96,7 @@ impl State {
     }
 }
 
-fn try_main() -> Result<(), Whatever> {
+fn try_main() -> Result<(), Error> {
     let args = Args::parse();
 
     env_logger::Builder::new()
@@ -70,7 +106,7 @@ fn try_main() -> Result<(), Whatever> {
     // Determine working directory and load all data files.
     let mail_dir = args.path.unwrap_or_else(|| PathBuf::from("."));
 
-    let config = Config::from_file(mail_dir.join("mujmap.toml"))?;
+    let config = Config::from_file(mail_dir.join("mujmap.toml")).context(OpenConfigFileSnafu {})?;
 
     // Load the intermediary state.
     let state_filename = mail_dir.join("mujmap.state.json");
@@ -80,44 +116,41 @@ fn try_main() -> Result<(), Whatever> {
     });
 
     // Open the local notmuch database.
-    let project_dirs = ProjectDirs::from("sh.eliza", "", "mujmap").unwrap();
-    let local = Local::open(mail_dir, project_dirs.cache_dir(), args.dry_run)
-        .with_whatever_context(|source| format!("Could not open local state: {}", source))?;
+    let local = Local::open(mail_dir, args.dry_run).context(OpenLocalSnafu {})?;
+
+    // Open the local cache.
+    let cache = Cache::open(&local.mail_cur_dir).context(OpenCacheSnafu {})?;
 
     // Open the remote session.
     let mut remote = match &config.fqdn {
-        Some(fqdn) => Remote::open_host(&fqdn, config.username.as_str(), &config.password()?),
+        Some(fqdn) => Remote::open_host(
+            &fqdn,
+            config.username.as_str(),
+            &config.password().context(GetPasswordSnafu {})?,
+        ),
         None => Remote::open_url(
             &config.session_url.as_ref().unwrap(),
             config.username.as_str(),
-            &config.password()?,
+            &config.password().context(GetPasswordSnafu {})?,
         ),
     }
-    .with_whatever_context(|source| format!("Could not open remote state: {}", source))?;
+    .context(OpenRemoteSnafu {})?;
 
     // Query local database for all email.
-    let local_email = local
-        .all_email()
-        .with_whatever_context(|source| format!("Could not query lcoal email: {}", source))?;
+    let local_emails = local.all_email().context(IndexLocalEmailSnafu {})?;
 
     // Function which performs a full sync, i.e. a sync which considers all
     // remote IDs as updated, and determines destroyed IDs by finding the
     // difference of all remote IDs from all local IDs.
-    let full_sync = |remote: &mut Remote| -> Result<
-        (jmap::State, HashSet<jmap::Id>, HashSet<jmap::Id>),
-        Whatever,
-    > {
-        let (state, updated_ids) = remote.all_email_ids().with_whatever_context(|source| {
-            format!(
-                "Could not query all remote email IDs for a full sync: {}",
-                source
-            )
-        })?;
-        // TODO can we optimize these two lines?
-        let local_ids: HashSet<jmap::Id> = local_email.iter().map(|(id, _)| id).cloned().collect();
-        let destroyed_ids = local_ids.difference(&updated_ids).cloned().collect();
-        Ok((state, updated_ids, destroyed_ids))
-    };
+    let full_sync =
+        |remote: &mut Remote| -> Result<(jmap::State, HashSet<jmap::Id>, HashSet<jmap::Id>)> {
+            let (state, updated_ids) = remote.all_email_ids().context(IndexRemoteEmailSnafu {})?;
+            // TODO can we optimize these two lines?
+            let local_ids: HashSet<jmap::Id> =
+                local_emails.iter().map(|(id, _)| id).cloned().collect();
+            let destroyed_ids = local_ids.difference(&updated_ids).cloned().collect();
+            Ok((state, updated_ids, destroyed_ids))
+        };
 
     // Create lists of updated and destroyed `Email` IDs. This is done in one of
     // two ways, depending on if we have a working JMAP `Email` state.
@@ -145,16 +178,57 @@ fn try_main() -> Result<(), Whatever> {
     );
 
     // Retrieve the updated `Email` objects from the server.
-    let (_, emails) = remote
-        .get_emails(state.clone(), &updated_ids, config.email_get_chunk_size)
-        .with_whatever_context(|source| {
-            format!(
-                "Could not retrieve email properties from remote: {}",
-                source
-            )
-        })?;
+    let (_, remote_emails) = remote
+        .get_emails(state.clone(), &updated_ids)
+        .context(GetRemoteEmailsSnafu {})?;
 
     // Before merging, download the new files into the cache.
+    // let cached_blobs = local.all_cached_blobs().with_whatever_context(|source| {
+    //     format!("Could not discover extant files in cache: {}", source)
+    // })?;
+    let missing_emails: Vec<&remote::Email> = remote_emails
+        .values()
+        .filter(|remote_email| {
+            // If we have a local mail file with the same `Email` and blob IDs,
+            // skip it.
+            match local_emails.get(&remote_email.id) {
+                Some(local_email) => {
+                    if local_email.blob_id == remote_email.blob_id {
+                        return false;
+                    }
+                }
+                None => {}
+            }
+
+            // If the cache already has this file, skip it.
+            !cache.is_in_cache(&remote_email.id, &remote_email.blob_id)
+        })
+        .collect();
+
+    info!("Downloading new mail...");
+    let pb = ProgressBar::new(missing_emails.len() as u64);
+    let pool = rayon::ThreadPoolBuilder::new()
+        .num_threads(config.concurrent_downloads)
+        .build()
+        .context(CreateDownloadThreadPoolSnafu {})?;
+    let result: Result<Vec<_>, Error> = pool.install(|| {
+        missing_emails
+            .into_par_iter()
+            .map(|remote_email| {
+                let reader = remote
+                    .read_email_blob(&remote_email.blob_id)
+                    .context(DownloadRemoteEmailSnafu {})?;
+                cache
+                    .download_into_cache(&remote_email.id, &remote_email.blob_id, reader)
+                    .context(CacheNewEmailSnafu {})?;
+                pb.inc(1);
+                Ok(())
+            })
+            .collect()
+    });
+    result?;
+
+    pb.finish_with_message("done");
 
     Ok(())
 }
