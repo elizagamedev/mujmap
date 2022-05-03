@@ -1,0 +1,151 @@
+The design of =mujmap= was heavily inspired by [[https://github.com/gauteh/lieer][lieer]].
+
+* Links
+- [[https://datatracker.ietf.org/doc/html/rfc8620][RFC 8620 - The JSON Meta Application Protocol (JMAP)]]
+- [[https://datatracker.ietf.org/doc/html/rfc8621][RFC 8621 - The JSON Meta Application Protocol (JMAP) for Mail]]
+
+* Local State
+
+** Mail Files
+- We place new mail files to a cache directory =XDG_CACHE_HOME/mujmap= before
+  eventually moving them into the user's maildir.
+
+- We use a standard [[https://cr.yp.to/proto/maildir.html][maildir]] structure. The user configures the location of this
+  directory.
+
+- Each mail is stored with the name ={id}.{blobId}:2,= with additional maildir
+  flags appended to the end. This format is important, because we parse
+  filenames to associate files on-disk with files in the JMAP server.
+
+  According to the [[https://cr.yp.to/proto/maildir.html][maildir spec]], the part of the mail filename before the colon
+  is not supposed to have semantic meaning, but instead differentiate each mail
+  with a unique identifier. We assign semantic meaning to them so that we don't
+  have to maintain a separate mapping between =notmuch= IDs and JMAP IDs. As
+  such, using =mujmap= to manage an existing maildir is ill-advised.
+
+** Other Files
+Between each sync operation, =mujmap= stores the following information
+/independently/ from the mail files and notmuch's database.
+
+- The =notmuch= database revision from the time of the most recent sync.
+
+  We use this to determine every change the user has made to their =notmuch=
+  database between =mujmap= syncs.
+
+- The =state= property of the last call to the =Email/get= API.
+
+  We use this to resolve changes more quickly via the =Email/changes= API. The
+  JMAP spec recommends servers be able to provide state changes within 30 days
+  of a previous request, but a poorly implemented server may not be able to
+  resolve changes at all. =mujmap= handles both cases.
+
+- If a sync was interrupted, a partial-sync file with the list of updated
+  =Email= properties and deleted =Email= IDs that haven't yet been processed.
+
+  These are described in more detail below.
+
+- A lockfile to prevent multiple syncs from accidentally happening at the same
+  time.
+
+* Sync Process
+
+** Setup
+Before doing anything, check for or create a lock file so we don't accidentally
+run two instances of =mujmap= at once.
+
+** Pulling
+The goal of a pull is to build a list of properties from all newly created or
+updated mail since our last sync which we can later interpret as changes to our
+=notmuch= database. The properties we collect are:
+
+- =id=, so we can identify this =Email=.
+- =blobId=, so that we can compare the server mail's content with our local copy
+  (if one exists), and potentially later download the server mail.
+- =mailboxIds=, so that we can synchronize these with =notmuch= tags.
+- =keywords=, so that we can synchronize these with =notmuch= tags.
+
+Additionally, we gather the set of =Email= IDs have since been destroyed.
+
+*** Querying for changed =Email= IDs
+:PROPERTIES:
+:CUSTOM_ID: querying
+:END:
+- If we have a valid, cached =state=, we use =Email/changes= to retrieve a list
+  of created, updated, and destroyed =Email= IDs since our previous sync. Place
+  the created and updated =Email= IDs in an "update" queue and place the
+  destroyed =Email= IDs in the "destroyed" set.
+- If we do /not/ have a valid, cached =state=, invoke =Email/query= to collect a
+  list of all =Email= IDs that exist on the JMAP server. Since we don't know
+  which of these have been updated since the last time we performed a sync,
+  place them all in the "update" queue. Place each mail in our maildir that is
+  not in this list into the "destroyed" set.
+
+*** Retrieving =Email= metadata
+Now for each =Email= ID in the queue, call =Email/get= to retrieve the
+properties of interest listed above. If at any point =Email/get= returns a new
+=state=, jump back to the [[#querying][querying]] algorithm with the new =state=, appending to
+the end of the queue. Thus if there is another update on the server to an
+=Email= we've already called =Email/get= for, we can simpy call it again and
+update the entry in our list.
+
+*** Downloading mail blobs
+For each mail in our "update" list whose blob file does not exist in either the
+maildir directory or =mujmap='s cache, download the blob data as described in
+[[https://datatracker.ietf.org/doc/html/rfc8620#section-6.2][Section 6.2 of RFC 8620]] into a temporary file and move it into =mujmap='s cache
+only once the file has been fully downloaded using the naming scheme described
+in the [[*Mail Files][Mail Files]] section. JMAP does not have built-in
+provisions for checking data integrity of blob files save for redowloading them
+entirely, so it's important that we do not store partially-downloaded files.
+
+** Merging
+At this point, we have a list of newly updated and destroyed =Email= entries and
+their relevant properties as they exist now on the server. We must now perform
+the following steps for each mail:
+
+- Determine the set of tags to add and remove to/from =notmuch='s database
+  entry.
+
+- Determine the set of keywords and =Mailbox= IDs to add and remove to/from the
+  JMAP server's =Email= object via =Email/set=.
+
+- Apply the remote changes tags.
+
+  This can be done without clobbering any other remote changes happening in
+  parallel because the =keywords= and =mailboxId= properties are represented as
+  objects with each keyword and =Mailbox= ID as keys and =true= as values, and
+  =Email/set= supports inserting and removing arbitrary key/value pairs.
+
+- Apply the local changes if and only if the remote changes were successfully
+  applied.
+
+  This involves moving the mail file into the maildir, creating the new entry in
+  =notmuch='s database if necessary, and applying the tag changes.
+
+** Cleanup
+Update the =state= and =notmuch= revision property as described in the [[*Other
+Files][Other Files]] section. Then remove the lockfile. We're done!
+
+* Recovering from Failure
+In the event of interruption via SIGINT, unrecoverable server error, etc, we can
+elegantly pause the sync and resume it in the future. It isn't strictly
+necessary to handle this case specially, since retracing all of the changes from
+the previously recorded =notmuch= database revision and the last server =state=
+would end with the same result, but it can potentially save network usage.
+
+- Record the list of updated =Email= properties and the deleted =Email= IDs
+  into a partial-sync file as described in the [[*Other Files][Other Files]] section.
+
+- Update the =state= but /not/ the =notmuch= database revision as described in
+  the [[*Other Files][Other Files]] section.
+
+- Remove the lockfile. We're done.
+
+In the event of a completely catastrophic failure, which occurs in the middle of
+the [[*Merging][merging]] process, e.g. power outage, we still probably have a recoverable
+state, but it might be safer to replace the =notmuch= database from scratch by
+redoing an initial sync.
+
+* Future Work
+- A =mujmap= daemon which uses JMAP's push notifications as described in
+  [[https://datatracker.ietf.org/doc/html/rfc8620#section-7][Section 7 of RFC
+  8620]] to continuously download new mail and propagate updates both ways.

@@ -1,0 +1,35 @@
+[package]
+name = "mujmap"
+description = "JMAP synchronization for notmuch mail"
+authors = ["Eliza Velasquez"]
+version = "0.1.0"
+license = "GPL-3.0"
+keywords = ["notmuch", "mail", "email", "jmap"]
+categories = ["command-line-utillities", "email"]
+repository = "https://github.com/elizagamedev/muchmore/"
+edition = "2021"
+
+# See more keys and their definitions at https://doc.rust-lang.org/cargo/reference/manifest.html
+
+[dependencies]
+base64 = "0.13.0"
+clap = { version = "3.1.14", features = ["derive"] }
+clap-verbosity-flag = "1.0.0"
+directories = "4.0.1"
+env_logger = "0.9.0"
+futures = "0.3.21"
+http = "0.2.7"
+indicatif = "0.16.2"
+itertools = "0.10.3"
+lazy_static = "1.4.0"
+log = "0.4.16"
+notmuch = { git = "https://github.com/vhdirk/notmuch-rs" }
+path-absolutize = "3.0.13"
+regex = "1.5.5"
+serde = { version = "1.0.136", features = ["derive"] }
+serde_json = "1.0.79"
+snafu = "0.7.0"
+toml = "0.5.9"
+trust-dns-resolver = "0.21.2"
+ureq = { version = "2.4.0", features = ["json"] }
+uritemplate-next = "0.2.0"
