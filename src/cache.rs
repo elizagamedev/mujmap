@@ -112,7 +112,7 @@ impl Cache {
         Ok(())
     }
 
-    fn make_cache_path(&self, email_id: &jmap::Id, blob_id: &jmap::Id) -> PathBuf {
+    pub fn make_cache_path(&self, email_id: &jmap::Id, blob_id: &jmap::Id) -> PathBuf {
         self.cache_dir.join(format!(
             "{}{}.{}",
             self.cached_file_prefix, email_id.0, blob_id.0

@@ -1,12 +1,16 @@
 use std::{
     collections::{HashMap, HashSet},
     io::{self, Read},
+    time::Duration,
 };
 
-use crate::jmap::{self, Id, State};
+use crate::{
+    config::{self, Config},
+    jmap::{self, Id, State},
+};
 use indicatif::ProgressBar;
 use itertools::Itertools;
-use log::{info, trace};
+use log::{trace, warn};
 use serde::{de::DeserializeOwned, Serialize};
 use snafu::prelude::*;
 use trust_dns_resolver::{error::ResolveError, Resolver};
@@ -14,6 +18,9 @@ use uritemplate::UriTemplate;
 
 #[derive(Debug, Snafu)]
 pub enum Error {
+    #[snafu(display("Could not get password from config: {}", source))]
+    GetPassword { source: config::Error },
+
     #[snafu(display("Could not determine DNS settings from resolv.conf: {}", source))]
     ParseResolvConf { source: io::Error },
 
@@ -61,6 +68,9 @@ pub enum Error {
 
     #[snafu(display("Could not read Email blob from server: {}", source))]
     ReadEmailBlobError { source: ureq::Error },
+
+    #[snafu(display("Mailbox contained an invalid path"))]
+    InvalidMailboxPath {},
 }
 
 pub type Result<T, E = Error> = std::result::Result<T, E>;
@@ -70,10 +80,12 @@ struct HttpWrapper {
     authorization: String,
     /// Persistent ureq agent to use for all HTTP requests.
     agent: ureq::Agent,
+    /// Number of times to retry a request.
+    retries: usize,
 }
 
 impl HttpWrapper {
-    fn new(username: &str, password: &str) -> Self {
+    fn new(username: &str, password: &str, timeout: u64, retries: usize) -> Self {
         let safe_username = match username.find(':') {
             Some(idx) => &username[..idx],
             None => username,
@@ -84,11 +96,13 @@ impl HttpWrapper {
         );
         let agent = ureq::AgentBuilder::new()
             .redirect_auth_headers(ureq::RedirectAuthHeaders::SameHost)
+            .timeout(Duration::from_secs(timeout))
             .build();
 
         Self {
             agent,
             authorization,
+            retries,
         }
     }
 
@@ -105,16 +119,37 @@ impl HttpWrapper {
     }
 
     fn get_reader(&self, url: &str) -> Result<impl Read + Send> {
-        Ok(self
-            .agent
-            .get(url)
-            .set("Authorization", &self.authorization)
-            .call()
-            .context(ReadEmailBlobSnafu {})?
-            .into_reader()
-            // Limiting download size as advised by ureq's documentation:
-            // https://docs.rs/ureq/latest/ureq/struct.Response.html#method.into_reader
-            .take(10_000_000))
+        let mut retry_count = 0;
+        loop {
+            match self
+                .agent
+                .get(url)
+                .set("Authorization", &self.authorization)
+                .call()
+            {
+                Ok(call) => {
+                    return Ok(call
+                        .into_reader()
+                        // Limiting download size as advised by ureq's documentation:
+                        // https://docs.rs/ureq/latest/ureq/struct.Response.html#method.into_reader
+                        .take(10_000_000));
+                }
+                Err(e) => match e {
+                    ureq::Error::Transport(_) => {
+                        // Try again.
+                        retry_count += 1;
+                        if retry_count >= self.retries {
+                            return Err(e).context(ReadEmailBlobSnafu {});
+                        }
+                        warn!(
+                            "Transport error in GET on try {}, retrying: {}",
+                            retry_count, e
+                        );
+                    }
+                    _ => return Err(e).context(ReadEmailBlobSnafu {}),
+                },
+            };
+        }
     }
 
     fn post<S: Serialize, D: DeserializeOwned>(&self, url: &str, body: S) -> Result<D> {
@@ -137,7 +172,33 @@ pub struct Remote {
 }
 
 impl Remote {
-    pub fn open_host(fqdn: &str, username: &str, password: &str) -> Result<Self> {
+    pub fn open(config: &Config) -> Result<Self> {
+        let password = config.password().context(GetPasswordSnafu {})?;
+        match &config.fqdn {
+            Some(fqdn) => Self::open_host(
+                &fqdn,
+                config.username.as_str(),
+                &password,
+                config.timeout,
+                config.retries,
+            ),
+            None => Remote::open_url(
+                &config.session_url.as_ref().unwrap(),
+                config.username.as_str(),
+                &password,
+                config.timeout,
+                config.retries,
+            ),
+        }
+    }
+
+    pub fn open_host(
+        fqdn: &str,
+        username: &str,
+        password: &str,
+        timeout: u64,
+        retries: usize,
+    ) -> Result<Self> {
         let resolver = Resolver::from_system_conf().context(ParseResolvConfSnafu {})?;
         let mut address = format!("_jmap._tcp.{}", fqdn);
         if !address.ends_with(".") {
@@ -147,7 +208,7 @@ impl Remote {
             .srv_lookup(address.as_str())
             .context(SrvLookupSnafu { address })?;
 
-        let http_wrapper = HttpWrapper::new(username, password);
+        let http_wrapper = HttpWrapper::new(username, password, timeout, retries);
 
         // Try all SRV names in order of priority.
         let mut last_err = None;
@@ -178,8 +239,14 @@ impl Remote {
         Err(error).context(OpenSessionSnafu { session_url })
     }
 
-    pub fn open_url(session_url: &str, username: &str, password: &str) -> Result<Self> {
-        let http_wrapper = HttpWrapper::new(username, password);
+    pub fn open_url(
+        session_url: &str,
+        username: &str,
+        password: &str,
+        timeout: u64,
+        retries: usize,
+    ) -> Result<Self> {
+        let http_wrapper = HttpWrapper::new(username, password, timeout, retries);
         let (session_url, session) = http_wrapper
             .get_session(session_url)
             .context(OpenSessionSnafu { session_url })?;
@@ -375,8 +442,6 @@ impl Remote {
     ) -> Result<(State, HashMap<Id, Email>)> {
         const GET_METHOD_ID: &str = "0";
 
-        info!("Retrieving metadata...");
-
         let pb = ProgressBar::new(email_ids.len() as u64);
         let chunk_size = self.session.capabilities.core.max_objects_in_get as usize;
 
@@ -418,6 +483,96 @@ impl Remote {
         }
         pb.finish_with_message("done");
         Ok((state, emails))
+    }
+
+    /// Return all `Mailbox`es.
+    pub fn get_mailboxes<'a>(&mut self) -> Result<HashMap<jmap::Id, Mailbox>> {
+        const GET_METHOD_ID: &str = "0";
+
+        let account_id = &self.session.primary_accounts.mail;
+        let mut response = self.request(jmap::Request {
+            using: &[jmap::CapabilityKind::Mail],
+            method_calls: &[jmap::RequestInvocation {
+                call: jmap::MethodCall::MailboxGet {
+                    get: jmap::MethodCallGet {
+                        account_id,
+                        ids: None,
+                        properties: Some(&["id", "parentId", "name", "role"]),
+                    },
+                },
+                id: GET_METHOD_ID,
+            }],
+            created_ids: None,
+        })?;
+        self.update_session_state(&response.session_state)?;
+
+        if response.method_responses.len() != 1 {
+            return Err(Error::UnexpectedResponse);
+        }
+
+        let get_response = expect_mailbox_get(GET_METHOD_ID, response.method_responses.remove(0))?;
+
+        // Reinterpret the mailbox data.
+        let jmap_mailboxes: HashMap<jmap::Id, jmap::Mailbox> = get_response
+            .list
+            .into_iter()
+            .map(|x| (x.id.clone(), x))
+            .collect();
+        Ok(jmap_mailboxes
+            .values()
+            .map(|jmap_mailbox| {
+                Ok(match jmap_mailbox.role {
+                    // Ignore these mailboxes. They don't translate to useful
+                    // tags, and we can safely ignore them when patching
+                    // remotely.
+                    Some(jmap::MailboxRole::All)
+                    | Some(jmap::MailboxRole::Archive)
+                    | Some(jmap::MailboxRole::Subscribed)
+                    | Some(jmap::MailboxRole::Unknown) => None,
+                    _ => {
+                        // Determine full path, e.g. root-label/child-label.
+                        let mut path_ids = vec![&jmap_mailbox.id];
+                        let mut maybe_parent_id = &jmap_mailbox.parent_id;
+                        while let Some(parent_id) = maybe_parent_id {
+                            ensure!(!path_ids.contains(&parent_id), InvalidMailboxPathSnafu {});
+                            path_ids.push(&parent_id);
+
+                            let parent = jmap_mailboxes
+                                .get(&parent_id)
+                                .ok_or(Error::InvalidMailboxPath {})?;
+                            maybe_parent_id = &parent.parent_id;
+                        }
+                        Some(
+                            path_ids
+                                .into_iter()
+                                .rev()
+                                .map(|x| {
+                                    let mailbox = &jmap_mailboxes[&x];
+                                    mailbox
+                                        .role
+                                        .map(|x| {
+                                            if x == jmap::MailboxRole::Unknown {
+                                                &mailbox.name
+                                            } else {
+                                                x.as_str()
+                                            }
+                                        })
+                                        .unwrap_or(&mailbox.name)
+                                })
+                                .join("/"),
+                        )
+                    }
+                }
+                .map(|name| Mailbox {
+                    id: jmap_mailbox.id.clone(),
+                    name,
+                }))
+            })
+            .collect::<Result<Vec<_>>>()?
+            .into_iter()
+            .flatten()
+            .map(|x| (x.id.clone(), x))
+            .collect())
     }
 
     pub fn read_email_blob(&self, id: &Id) -> Result<impl Read + Send> {
@@ -463,6 +618,12 @@ pub struct Email {
     pub blob_id: Id,
     pub keywords: HashSet<jmap::EmailKeyword>,
     pub mailbox_ids: HashSet<Id>,
+}
+
+#[derive(Debug)]
+pub struct Mailbox {
+    pub id: Id,
+    pub name: String,
 }
 
 impl Email {
@@ -523,6 +684,20 @@ fn expect_email_changes(
     }
     match invocation.call {
         jmap::MethodResponse::EmailChanges(changes) => Ok(changes),
+        jmap::MethodResponse::Error(error) => Err(Error::MethodError { error }),
+        _ => Err(Error::UnexpectedResponse),
+    }
+}
+
+fn expect_mailbox_get(
+    id: &str,
+    invocation: jmap::ResponseInvocation,
+) -> Result<jmap::MethodResponseGet<jmap::Mailbox>> {
+    if invocation.id != id {
+        return Err(Error::UnexpectedResponse);
+    }
+    match invocation.call {
+        jmap::MethodResponse::MailboxGet(get) => Ok(get),
         jmap::MethodResponse::Error(error) => Err(Error::MethodError { error }),
         _ => Err(Error::UnexpectedResponse),
     }

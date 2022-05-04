@@ -1,4 +1,5 @@
 use clap::Parser;
+use clap_verbosity_flag::{Verbosity, WarnLevel};
 use std::path::PathBuf;
 
 #[derive(Parser, Debug)]
@@ -15,5 +16,5 @@ pub struct Args {
     pub dry_run: bool,
 
     #[clap(flatten)]
-    pub verbose: clap_verbosity_flag::Verbosity,
+    pub verbose: Verbosity<WarnLevel>,
 }

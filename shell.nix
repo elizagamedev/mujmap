@@ -13,6 +13,5 @@ pkgs.mkShell {
   ];
 
   shellHook = ''
-    export RUST_LOG=mujmap=debug
   '';
 }

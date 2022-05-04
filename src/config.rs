@@ -70,10 +70,26 @@ pub struct Config {
     /// created for HTTP download requests.
     #[serde(default = "default_concurrent_downloads")]
     pub concurrent_downloads: usize,
+
+    /// Number of seconds before timing out on a stalled connection.
+    #[serde(default = "default_timeout")]
+    pub timeout: u64,
+
+    /// Number of retries to establish an HTTP request. 0 means infinite.
+    #[serde(default = "default_retries")]
+    pub retries: usize,
 }
 
 fn default_concurrent_downloads() -> usize {
-    16
+    32
+}
+
+fn default_timeout() -> u64 {
+    5
+}
+
+fn default_retries() -> usize {
+    5
 }
 
 impl Config {

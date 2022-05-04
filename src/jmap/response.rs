@@ -2,7 +2,6 @@ use serde::{
     de::{Error, SeqAccess, Visitor},
     Deserialize, Deserializer,
 };
-use serde_json::Value;
 use std::{collections::HashMap, fmt};
 
 use super::{Id, State};
@@ -58,10 +57,6 @@ impl<'de> Deserialize<'de> for ResponseInvocation {
 
                 let length_err = Error::invalid_length(1, &"3");
                 let call = match name.as_str() {
-                    "Core/echo" => Ok(MethodResponse::CoreEcho(
-                        seq.next_element::<HashMap<String, Value>>()?
-                            .ok_or(length_err)?,
-                    )),
                     "Email/get" => Ok(MethodResponse::EmailGet(
                         seq.next_element::<MethodResponseGet<Email>>()?
                             .ok_or(length_err)?,
@@ -74,6 +69,10 @@ impl<'de> Deserialize<'de> for ResponseInvocation {
                         seq.next_element::<MethodResponseChanges>()?
                             .ok_or(length_err)?,
                     )),
+                    "Mailbox/get" => Ok(MethodResponse::MailboxGet(
+                        seq.next_element::<MethodResponseGet<Mailbox>>()?
+                            .ok_or(length_err)?,
+                    )),
                     "error" => Ok(MethodResponse::Error(
                         seq.next_element::<MethodResponseError>()?
                             .ok_or(length_err)?,
@@ -81,10 +80,10 @@ impl<'de> Deserialize<'de> for ResponseInvocation {
                     _ => Err(Error::unknown_field(
                         name.as_str(),
                         &[
-                            "Core/echo",
                             "Email/get",
                             "Email/query",
                             "Email/changes",
+                            "Mailbox/get",
                             "error",
                         ],
                     )),
@@ -225,7 +224,7 @@ pub struct Email {
     pub mailbox_ids: HashMap<Id, bool>,
 }
 
-#[derive(Eq, PartialEq, Hash, Debug, Deserialize)]
+#[derive(Clone, Copy, Eq, PartialEq, Hash, Debug, Deserialize)]
 pub enum EmailKeyword {
     #[serde(rename = "$draft")]
     Draft,
@@ -235,17 +234,87 @@ pub enum EmailKeyword {
     Flagged,
     #[serde(rename = "$answered")]
     Answered,
+    #[serde(rename = "$Forwarded")]
+    Forwarded,
     #[serde(other)]
     Unknown,
 }
 
+#[derive(Debug, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct Mailbox {
+    /// The id of the Mailbox.
+    pub id: Id,
+    /// The Mailbox id for the parent of this Mailbox, or null if this Mailbox
+    /// is at the top level. Mailboxes form acyclic graphs (forests) directed by
+    /// the child-to-parent relationship. There MUST NOT be a loop.
+    pub parent_id: Option<Id>,
+    /// User-visible name for the Mailbox, e.g., “Inbox”. This MUST be a
+    /// Net-Unicode string [@!RFC5198] of at least 1 character in length,
+    /// subject to the maximum size given in the capability object. There MUST
+    /// NOT be two sibling Mailboxes with both the same parent and the same
+    /// name. Servers MAY reject names that violate server policy (e.g., names
+    /// containing a slash (/) or control characters).
+    pub name: String,
+    /// Identifies Mailboxes that have a particular common purpose (e.g., the
+    /// “inbox”), regardless of the name property (which may be localised).
+    pub role: Option<MailboxRole>,
+}
+
+/// https://www.iana.org/assignments/imap-mailbox-name-attributes/imap-mailbox-name-attributes.xhtml
+#[derive(Clone, Copy, Eq, PartialEq, Hash, Debug, Deserialize)]
+#[serde(rename_all = "lowercase")]
+pub enum MailboxRole {
+    /// All messages.
+    All,
+    /// Archived messages.
+    Archive,
+    /// Messages that are working drafts.
+    Drafts,
+    /// Messages with the \Flagged flag.
+    Flagged,
+    /// Messages deemed important to user.
+    Important,
+    /// Messages New mail is delivered here by default.
+    Inbox,
+    /// Messages identified as Spam/Junk.
+    Junk,
+    /// Sent mail.
+    Sent,
+    /// The mailbox is subscribed to.
+    Subscribed,
+    /// Messages the user has discarded.
+    Trash,
+    /// As-of-yet defined roles.
+    #[serde(other)]
+    Unknown,
+}
+
+impl MailboxRole {
+    pub fn as_str(&self) -> &'static str {
+        match *self {
+            MailboxRole::All => "all",
+            MailboxRole::Archive => "archive",
+            MailboxRole::Drafts => "draft",
+            MailboxRole::Flagged => "flagged",
+            MailboxRole::Important => "important",
+            MailboxRole::Inbox => "inbox",
+            MailboxRole::Junk => "spam",
+            MailboxRole::Sent => "sent",
+            MailboxRole::Subscribed => "subscribed",
+            MailboxRole::Trash => "deleted",
+            MailboxRole::Unknown => "YOU_SHOULD_NOT_SEE_THIS",
+        }
+    }
+}
+
 #[derive(Debug)]
 pub enum MethodResponse {
-    CoreEcho(HashMap<String, Value>),
-
     EmailGet(MethodResponseGet<Email>),
     EmailQuery(MethodResponseQuery),
     EmailChanges(MethodResponseChanges),
+
+    MailboxGet(MethodResponseGet<Mailbox>),
 
     Error(MethodResponseError),
 }

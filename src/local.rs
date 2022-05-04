@@ -1,10 +1,12 @@
+use crate::cache::Cache;
 use crate::jmap;
+use crate::remote;
 use const_format::formatcp;
 use lazy_static::lazy_static;
 use log::debug;
+use log::warn;
 use notmuch::Database;
 use notmuch::Message;
-use notmuch::Messages;
 use path_absolutize::*;
 use regex::Regex;
 use snafu::prelude::*;
@@ -50,6 +52,16 @@ pub enum Error {
         query: String,
         source: notmuch::Error,
     },
+
+    #[snafu(display("Could not rename mail file from `{}' to `{}': {}", from.to_string_lossy(), to.to_string_lossy(), source))]
+    RenameMailFile {
+        from: PathBuf,
+        to: PathBuf,
+        source: io::Error,
+    },
+
+    #[snafu(display("Could not index new file in notmuch database: {}", source))]
+    IndexFile { source: notmuch::Error },
 }
 
 pub type Result<T, E = Error> = std::result::Result<T, E>;
@@ -61,8 +73,6 @@ pub struct Local {
     pub mail_cur_dir: PathBuf,
     /// Notmuch search query which searches for all mail in mujmap's maildir.
     all_mail_query: String,
-    /// Is this a dry run?
-    dry_run: bool,
 }
 
 impl Local {
@@ -73,7 +83,11 @@ impl Local {
         // Open the notmuch database with default config options.
         let db = Database::open_with_config::<PathBuf, PathBuf>(
             None,
-            notmuch::DatabaseMode::ReadOnly,
+            if dry_run {
+                notmuch::DatabaseMode::ReadOnly
+            } else {
+                notmuch::DatabaseMode::ReadWrite
+            },
             None,
             None,
         )
@@ -108,7 +122,6 @@ impl Local {
             db,
             mail_cur_dir,
             all_mail_query,
-            dry_run,
         })
     }
 
@@ -116,19 +129,14 @@ impl Local {
         self.db.revision().revision
     }
 
-    /// Return a map of all `Email` IDs to `Email` objects.
-    pub fn all_email(&self) -> Result<HashMap<jmap::Id, Email>> {
-        Ok(self
-            .query(&self.all_mail_query)?
-            .into_iter()
-            .flat_map(|x| Email::from_message(x))
-            .map(|x| (x.id.clone(), x))
-            .collect())
+    /// Return all `Email`s that mujmap owns for this maildir.
+    pub fn all_emails(&self) -> Result<HashMap<jmap::Id, Email>> {
+        self.query(&self.all_mail_query)
     }
 
-    /// Return a list of all `Message`s that mujmap manages which were
-    /// modified since the given database revision.
-    pub fn all_email_since(&self, last_revision: u64) -> Result<Messages> {
+    /// Return all `Email`s that mujmap owns which were modified since the given
+    /// database revision.
+    pub fn all_emails_since(&self, last_revision: u64) -> Result<HashMap<jmap::Id, Email>> {
         self.query(&format!(
             "{} and lastmod:{}..{}",
             self.all_mail_query,
@@ -137,7 +145,36 @@ impl Local {
         ))
     }
 
-    fn query(&self, query_string: &str) -> Result<Messages> {
+    /// Move the given email file to the maildir and add it to notmuch's database.
+    pub fn add_new_email(&self, cache: &Cache, id: jmap::Id, blob_id: jmap::Id) -> Result<Email> {
+        let cached_file_path = cache.make_cache_path(&id, &blob_id);
+        let dest_file_path = self.mail_cur_dir.join(format!("{}.{}", id, blob_id));
+        fs::rename(&cached_file_path, &dest_file_path).context(RenameMailFileSnafu {
+            from: &cached_file_path,
+            to: &dest_file_path,
+        })?;
+
+        let message = match self.db.index_file(&dest_file_path, None) {
+            Ok(message) => message,
+            Err(e) => {
+                // Move the file back to the cache.
+                if let Err(e) = fs::rename(&dest_file_path, &cached_file_path) {
+                    warn!(
+                        "Error moving file back to cache after notmuch failure: {}",
+                        e
+                    );
+                }
+                return Err(e).context(IndexFileSnafu {});
+            }
+        };
+        Ok(Email {
+            id,
+            blob_id,
+            message,
+        })
+    }
+
+    fn query(&self, query_string: &str) -> Result<HashMap<jmap::Id, Email>> {
         debug!("notmuch query: {}", query_string);
 
         let query =
@@ -151,7 +188,11 @@ impl Local {
             .with_context(|_| ExecuteNotmuchQuerySnafu {
                 query: query_string.clone(),
             })?;
-        Ok(messages)
+        Ok(messages
+            .into_iter()
+            .flat_map(|x| Email::from_message(x))
+            .map(|x| (x.id.clone(), x))
+            .collect())
     }
 }
 
@@ -181,5 +222,39 @@ impl Email {
                 blob_id,
                 message,
             })
+    }
+
+    pub fn update(
+        &self,
+        remote_email: &remote::Email,
+        mailboxes: &HashMap<jmap::Id, remote::Mailbox>,
+    ) -> Result<(), notmuch::Error> {
+        // Replace all tags!
+        self.message.freeze()?;
+        self.message.remove_all_tags()?;
+        // Keywords.
+        for keyword in &remote_email.keywords {
+            if let Some(tag) = match keyword {
+                jmap::EmailKeyword::Draft => Some("draft"),
+                jmap::EmailKeyword::Seen => None,
+                jmap::EmailKeyword::Flagged => Some("flagged"),
+                jmap::EmailKeyword::Answered => Some("replied"),
+                jmap::EmailKeyword::Forwarded => Some("passed"),
+                jmap::EmailKeyword::Unknown => unreachable!(),
+            } {
+                self.message.add_tag(tag)?;
+            }
+        }
+        if !remote_email.keywords.contains(&jmap::EmailKeyword::Seen) {
+            self.message.add_tag("unread")?;
+        }
+        // Mailboxes.
+        for id in &remote_email.mailbox_ids {
+            if let Some(mailbox) = mailboxes.get(id) {
+                self.message.add_tag(&mailbox.name)?;
+            }
+        }
+        self.message.thaw()?;
+        Ok(())
     }
 }

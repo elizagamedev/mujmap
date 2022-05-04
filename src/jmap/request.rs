@@ -1,12 +1,9 @@
 use super::{Id, State};
 use serde::{ser::SerializeSeq, Serialize, Serializer};
-use serde_json::Value;
 use std::collections::HashMap;
 
 #[derive(Serialize)]
 pub enum CapabilityKind {
-    #[serde(rename = "urn:ietf:params:jmap:core")]
-    Core,
     #[serde(rename = "urn:ietf:params:jmap:mail")]
     Mail,
 }
@@ -61,9 +58,6 @@ impl<'a> Serialize for RequestInvocation<'a> {
         let mut seq = serializer.serialize_seq(Some(3))?;
 
         match self.call {
-            MethodCall::CoreEcho(_) => {
-                seq.serialize_element("Core/echo")?;
-            }
             MethodCall::EmailGet { .. } => {
                 seq.serialize_element("Email/get")?;
             }
@@ -72,6 +66,9 @@ impl<'a> Serialize for RequestInvocation<'a> {
             }
             MethodCall::EmailChanges { .. } => {
                 seq.serialize_element("Email/changes")?;
+            }
+            MethodCall::MailboxGet { .. } => {
+                seq.serialize_element("Mailbox/get")?;
             }
         }
 
@@ -84,11 +81,6 @@ impl<'a> Serialize for RequestInvocation<'a> {
 #[derive(Serialize)]
 #[serde(untagged)]
 pub enum MethodCall<'a> {
-    /// The Core/echo method returns exactly the same arguments as it is given.
-    /// It is useful for testing if you have a valid authenticated connection to
-    /// a JMAP API endpoint.
-    CoreEcho(HashMap<&'a str, Value>),
-
     #[serde(rename_all = "camelCase")]
     EmailGet {
         #[serde(flatten)]
@@ -105,6 +97,12 @@ pub enum MethodCall<'a> {
     EmailChanges {
         #[serde(flatten)]
         changes: MethodCallChanges<'a>,
+    },
+
+    #[serde(rename_all = "camelCase")]
+    MailboxGet {
+        #[serde(flatten)]
+        get: MethodCallGet<'a>,
     },
 }
 
