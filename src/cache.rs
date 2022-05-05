@@ -1,4 +1,5 @@
 use crate::jmap;
+use crate::NewEmail;
 use directories::ProjectDirs;
 use snafu::prelude::*;
 use snafu::Snafu;
@@ -73,9 +74,12 @@ impl Cache {
         })
     }
 
-    /// Are the given blob and email ID already in the cache?
-    pub fn is_in_cache(&self, email_id: &jmap::Id, blob_id: &jmap::Id) -> bool {
-        self.make_cache_path(email_id, blob_id).exists()
+    /// Return the path in the cache for the given IDs.
+    pub fn cache_path(&self, email_id: &jmap::Id, blob_id: &jmap::Id) -> PathBuf {
+        self.cache_dir.join(format!(
+            "{}{}.{}",
+            self.cached_file_prefix, email_id.0, blob_id.0
+        ))
     }
 
     /// Save the data from the given reader into the cache.
@@ -85,12 +89,7 @@ impl Cache {
     /// (hopefully less likely) be half-downloaded mail files. JMAP doesn't
     /// expose any means of checking data integrity other than comparing blob
     /// IDs, so it's important we take every precaution.
-    pub fn download_into_cache(
-        &self,
-        email_id: &jmap::Id,
-        blob_id: &jmap::Id,
-        mut reader: impl Read,
-    ) -> Result<()> {
+    pub fn download_into_cache(&self, new_email: &NewEmail, mut reader: impl Read) -> Result<()> {
         // Download to temporary file...
         let temporary_file_path = self.cache_dir.join(format!(
             "{}in_progress_download.{}",
@@ -104,18 +103,10 @@ impl Cache {
             path: &temporary_file_path,
         })?;
         // ...and move to its proper location.
-        let destination = self.make_cache_path(email_id, blob_id);
-        fs::rename(&temporary_file_path, &destination).context(RenameMailFileSnafu {
+        fs::rename(&temporary_file_path, &new_email.cache_path).context(RenameMailFileSnafu {
             from: &temporary_file_path,
-            to: &destination,
+            to: &new_email.cache_path,
         })?;
         Ok(())
-    }
-
-    pub fn make_cache_path(&self, email_id: &jmap::Id, blob_id: &jmap::Id) -> PathBuf {
-        self.cache_dir.join(format!(
-            "{}{}.{}",
-            self.cached_file_prefix, email_id.0, blob_id.0
-        ))
     }
 }

@@ -1,11 +1,11 @@
-use crate::cache::Cache;
 use crate::jmap;
 use crate::remote;
+use crate::NewEmail;
 use const_format::formatcp;
 use lazy_static::lazy_static;
 use log::debug;
-use log::warn;
 use notmuch::Database;
+use notmuch::Exclude;
 use notmuch::Message;
 use path_absolutize::*;
 use regex::Regex;
@@ -52,16 +52,6 @@ pub enum Error {
         query: String,
         source: notmuch::Error,
     },
-
-    #[snafu(display("Could not rename mail file from `{}' to `{}': {}", from.to_string_lossy(), to.to_string_lossy(), source))]
-    RenameMailFile {
-        from: PathBuf,
-        to: PathBuf,
-        source: io::Error,
-    },
-
-    #[snafu(display("Could not index new file in notmuch database: {}", source))]
-    IndexFile { source: notmuch::Error },
 }
 
 pub type Result<T, E = Error> = std::result::Result<T, E>;
@@ -129,6 +119,11 @@ impl Local {
         self.db.revision().revision
     }
 
+    /// Create a path for a newly added file to the maildir.
+    pub fn new_maildir_path(&self, id: &jmap::Id, blob_id: &jmap::Id) -> PathBuf {
+        self.mail_cur_dir.join(format!("{}.{}", id, blob_id))
+    }
+
     /// Return all `Email`s that mujmap owns for this maildir.
     pub fn all_emails(&self) -> Result<HashMap<jmap::Id, Email>> {
         self.query(&self.all_mail_query)
@@ -145,33 +140,30 @@ impl Local {
         ))
     }
 
-    /// Move the given email file to the maildir and add it to notmuch's database.
-    pub fn add_new_email(&self, cache: &Cache, id: jmap::Id, blob_id: jmap::Id) -> Result<Email> {
-        let cached_file_path = cache.make_cache_path(&id, &blob_id);
-        let dest_file_path = self.mail_cur_dir.join(format!("{}.{}", id, blob_id));
-        fs::rename(&cached_file_path, &dest_file_path).context(RenameMailFileSnafu {
-            from: &cached_file_path,
-            to: &dest_file_path,
-        })?;
+    /// Begin atomic database operation.
+    pub fn begin_atomic(&self) -> Result<(), notmuch::Error> {
+        self.db.begin_atomic()
+    }
 
-        let message = match self.db.index_file(&dest_file_path, None) {
-            Ok(message) => message,
-            Err(e) => {
-                // Move the file back to the cache.
-                if let Err(e) = fs::rename(&dest_file_path, &cached_file_path) {
-                    warn!(
-                        "Error moving file back to cache after notmuch failure: {}",
-                        e
-                    );
-                }
-                return Err(e).context(IndexFileSnafu {});
-            }
-        };
+    /// End atomic database operation.
+    pub fn end_atomic(&self) -> Result<(), notmuch::Error> {
+        self.db.end_atomic()
+    }
+
+    /// Add the given email into the database.
+    pub fn add_new_email(&self, new_email: &NewEmail) -> Result<Email, notmuch::Error> {
+        let message = self.db.index_file(&new_email.maildir_path, None)?;
         Ok(Email {
-            id,
-            blob_id,
+            id: new_email.remote_email.id.clone(),
+            blob_id: new_email.remote_email.blob_id.clone(),
             message,
+            path: new_email.maildir_path.clone(),
         })
+    }
+
+    /// Remove the given email file from notmuch's database and the disk.
+    pub fn remove_email(&self, email: &Email) -> Result<(), notmuch::Error> {
+        self.db.remove_message(&email.path)
     }
 
     fn query(&self, query_string: &str) -> Result<HashMap<jmap::Id, Email>> {
@@ -183,6 +175,7 @@ impl Local {
                 .with_context(|_| CreateNotmuchQuerySnafu {
                     query: query_string.clone(),
                 })?;
+        query.set_omit_excluded(Exclude::False);
         let messages = query
             .search_messages()
             .with_context(|_| ExecuteNotmuchQuerySnafu {
@@ -190,7 +183,7 @@ impl Local {
             })?;
         Ok(messages
             .into_iter()
-            .flat_map(|x| Email::from_message(x))
+            .flat_map(|x| Email::from_message(x, &self.mail_cur_dir))
             .map(|x| (x.id.clone(), x))
             .collect())
     }
@@ -200,27 +193,36 @@ pub struct Email {
     pub id: jmap::Id,
     pub blob_id: jmap::Id,
     pub message: Message,
+    pub path: PathBuf,
 }
 
 impl Email {
-    fn from_message(message: Message) -> Option<Self> {
+    fn from_message(message: Message, mail_cur_dir: &Path) -> Option<Self> {
         lazy_static! {
             static ref MAIL_FILE: Regex = Regex::new(MAIL_PATTERN).unwrap();
         }
         message
-            .filename()
-            .file_name()
-            .and_then(|x| {
-                MAIL_FILE.captures(&x.to_string_lossy()).map(|x| {
-                    let id = jmap::Id(x.get(0).unwrap().as_str().to_string());
-                    let blob_id = jmap::Id(x.get(1).unwrap().as_str().to_string());
-                    (id, blob_id)
-                })
+            .filenames()
+            .into_iter()
+            // Get the first filename in our mail dir. It's possible there are
+            // duplicate mail files in notmuch's database which we don't own.
+            .filter(|x| x.starts_with(mail_cur_dir))
+            .next()
+            .and_then(|path| {
+                MAIL_FILE
+                    .captures(&path.file_name().unwrap().to_string_lossy())
+                    .map(|x| {
+                        let id = jmap::Id(x.get(1).unwrap().as_str().to_string());
+                        let blob_id = jmap::Id(x.get(2).unwrap().as_str().to_string());
+                        (id, blob_id)
+                    })
+                    .map(|(id, blob_id)| (id, blob_id, path))
             })
-            .map(|(id, blob_id)| Self {
+            .map(|(id, blob_id, path)| Self {
                 id,
                 blob_id,
                 message,
+                path,
             })
     }
 

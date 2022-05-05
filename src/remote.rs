@@ -387,11 +387,15 @@ impl Remote {
 
     /// Given an `Email/get` state, return the latest `Email/get` state and a
     /// list of new/updated `Email` IDs and destroyed `Email` IDs.
-    pub fn updated_email_ids(&mut self, state: State) -> Result<(State, HashSet<Id>, HashSet<Id>)> {
+    pub fn changed_email_ids(
+        &mut self,
+        state: State,
+    ) -> Result<(State, HashSet<Id>, HashSet<Id>, HashSet<Id>)> {
         const CHANGES_METHOD_ID: &str = "0";
 
         let mut state = state;
 
+        let mut created_ids = HashSet::new();
         let mut updated_ids = HashSet::new();
         let mut destroyed_ids = HashSet::new();
 
@@ -420,7 +424,7 @@ impl Remote {
             let changes_response =
                 expect_email_changes(CHANGES_METHOD_ID, response.method_responses.remove(0))?;
 
-            updated_ids.extend(changes_response.created);
+            created_ids.extend(changes_response.created);
             updated_ids.extend(changes_response.updated);
             destroyed_ids.extend(changes_response.destroyed);
 
@@ -430,33 +434,33 @@ impl Remote {
             }
         }
 
-        Ok((state, updated_ids, destroyed_ids))
+        // It's possible something got put in both created and updated; make it
+        // mutually exclusive.
+        updated_ids.retain(|x| !created_ids.contains(x));
+
+        Ok((state, created_ids, updated_ids, destroyed_ids))
     }
 
-    /// Given an `Email/get` state and a list of `Email` IDs, return the latest
-    /// `Email/get` state and a map of their IDs to their properties.
-    pub fn get_emails<'a>(
-        &mut self,
-        state: State,
-        email_ids: &HashSet<jmap::Id>,
-    ) -> Result<(State, HashMap<Id, Email>)> {
+    /// Given a list of `Email` IDs, return a map of their IDs to their
+    /// properties.
+    pub fn get_emails<'a>(&mut self, email_ids: &HashSet<jmap::Id>) -> Result<HashMap<Id, Email>> {
         const GET_METHOD_ID: &str = "0";
 
         let pb = ProgressBar::new(email_ids.len() as u64);
         let chunk_size = self.session.capabilities.core.max_objects_in_get as usize;
 
         let mut emails: HashMap<Id, Email> = HashMap::new();
-        let mut state = state;
 
         for chunk in &email_ids.into_iter().chunks(chunk_size) {
             let account_id = &self.session.primary_accounts.mail;
+            let ids = chunk.collect::<Vec<&Id>>();
             let mut response = self.request(jmap::Request {
                 using: &[jmap::CapabilityKind::Mail],
                 method_calls: &[jmap::RequestInvocation {
                     call: jmap::MethodCall::EmailGet {
                         get: jmap::MethodCallGet {
                             account_id,
-                            ids: Some(chunk.collect::<Vec<&Id>>().as_slice()),
+                            ids: Some(&ids),
                             properties: Some(&["id", "blobId", "keywords", "mailboxIds"]),
                         },
                     },
@@ -473,16 +477,14 @@ impl Remote {
             let get_response =
                 expect_email_get(GET_METHOD_ID, response.method_responses.remove(0))?;
 
-            state = get_response.state;
-
             for email in get_response.list {
                 emails.insert(email.id.clone(), Email::from_jmap_email(email));
             }
 
-            pb.inc(chunk_size as u64);
+            pb.inc(ids.len() as u64);
         }
         pb.finish_with_message("done");
-        Ok((state, emails))
+        Ok(emails)
     }
 
     /// Return all `Mailbox`es.

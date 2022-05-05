@@ -744,6 +744,7 @@ dependencies = [
  "serde",
  "serde_json",
  "snafu",
+ "symlink",
  "termcolor",
  "toml",
  "trust-dns-resolver",
@@ -754,7 +755,7 @@ dependencies = [
 [[package]]
 name = "notmuch"
 version = "0.7.1"
-source = "git+https://github.com/vhdirk/notmuch-rs#330b4b47b47917bb10796f0d6abb7f7b39170961"
+source = "git+https://github.com/elizagamedev/notmuch-rs?branch=duplicate_message_id#bf353027cc82c8ffa814e712acce35c5a8b39d64"
 dependencies = [
  "from_variants",
  "libc",
@@ -1152,6 +1153,12 @@ name = "strsim"
 version = "0.10.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "73473c0e59e6d5812c5dfe2a064a6444949f089e20eec9a2e5506596494e4623"
+
+[[package]]
+name = "symlink"
+version = "0.1.0"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "a7973cce6668464ea31f176d85b13c7ab3bba2cb3b77a2ed26abd7801688010a"
 
 [[package]]
 name = "syn"
