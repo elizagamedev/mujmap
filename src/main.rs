@@ -12,7 +12,7 @@ use clap::Parser;
 use config::Config;
 use indicatif::ProgressBar;
 use local::Local;
-use log::warn;
+use log::{debug, error, warn};
 use rayon::{prelude::*, ThreadPoolBuildError};
 use remote::Remote;
 use serde::{Deserialize, Serialize};
@@ -129,6 +129,9 @@ pub enum Error {
 
     #[snafu(display("Could not end atomic database operation: {}", source))]
     EndAtomic { source: notmuch::Error },
+
+    #[snafu(display("Programmer error!"))]
+    ProgrammerError {},
 }
 
 pub type Result<T, E = Error> = std::result::Result<T, E>;
@@ -166,6 +169,7 @@ impl LatestState {
 }
 
 /// A new email to be eventually added to the maildir.
+#[derive(Debug)]
 pub struct NewEmail<'a> {
     pub remote_email: &'a remote::Email,
     pub cache_path: PathBuf,
@@ -193,7 +197,7 @@ fn try_main(stdout: &mut StandardStream) -> Result<(), Error> {
     // Load the intermediary state.
     let latest_state_filename = mail_dir.join("mujmap.state.json");
     let latest_state = LatestState::open(&latest_state_filename).unwrap_or_else(|e| {
-        warn!("{}", e);
+        warn!("{e}");
         LatestState::empty()
     });
 
@@ -232,13 +236,15 @@ fn try_main(stdout: &mut StandardStream) -> Result<(), Error> {
         .map(|jmap_state| {
             match remote.changed_email_ids(jmap_state) {
                 Ok((state, created, mut updated, destroyed)) => {
+                    debug!("Remote changes: state={state}, created={created:?}, updated={updated:?}, destroyed={destroyed:?}");
                     // If we have something in the updated set that isn't in the
                     // local database, something must have gone wrong somewhere.
                     // Do a full sync instead.
                     if !updated.iter().all(|x| local_emails.contains_key(x)) {
                         warn!(
                             "Server sent an update which references an ID we don't know about, doing a full sync instead");
-                        full_sync(&mut remote)
+                        let (_, updated, destroyed) = full_sync(&mut remote)?;
+                        Ok((state, updated, destroyed))
                     } else {
                         updated.extend(created);
                         Ok((state, updated, destroyed))
@@ -247,8 +253,7 @@ fn try_main(stdout: &mut StandardStream) -> Result<(), Error> {
                 Err(e) => {
                     // `Email/changes` failed, so fall back to `Email/query`.
                     warn!(
-                        "Error while attempting to resolve changes, attempting full sync: {}",
-                        e
+                        "Error while attempting to resolve changes, attempting full sync: {e}"
                     );
                     full_sync(&mut remote)
                 }
@@ -271,7 +276,7 @@ fn try_main(stdout: &mut StandardStream) -> Result<(), Error> {
         .values()
         .filter(|remote_email| match local_emails.get(&remote_email.id) {
             Some(local_email) => local_email.blob_id != remote_email.blob_id,
-            None => false,
+            None => true,
         })
         .map(|remote_email| NewEmail {
             remote_email,
@@ -282,37 +287,39 @@ fn try_main(stdout: &mut StandardStream) -> Result<(), Error> {
 
     let new_emails_missing_from_cache: Vec<&NewEmail> = new_emails
         .iter()
-        .filter(|x| !x.cache_path.exists())
+        .filter(|x| !x.cache_path.exists() && !local_emails.contains_key(&x.remote_email.id))
         .collect();
 
-    stdout.set_color(&info_color_spec).context(LogSnafu {})?;
-    writeln!(stdout, "Downloading new mail...").context(LogSnafu {})?;
-    stdout.reset().context(LogSnafu {})?;
-    stdout.flush().context(LogSnafu {})?;
+    if !new_emails_missing_from_cache.is_empty() {
+        stdout.set_color(&info_color_spec).context(LogSnafu {})?;
+        writeln!(stdout, "Downloading new mail...").context(LogSnafu {})?;
+        stdout.reset().context(LogSnafu {})?;
+        stdout.flush().context(LogSnafu {})?;
 
-    let pb = ProgressBar::new(new_emails_missing_from_cache.len() as u64);
-    let pool = rayon::ThreadPoolBuilder::new()
-        .num_threads(config.concurrent_downloads)
-        .build()
-        .context(CreateDownloadThreadPoolSnafu {})?;
-    let result: Result<Vec<_>, Error> = pool.install(|| {
-        new_emails_missing_from_cache
-            .into_par_iter()
-            .map(|new_email| {
-                let remote_email = new_email.remote_email;
-                let reader = remote
-                    .read_email_blob(&remote_email.blob_id)
-                    .context(DownloadRemoteEmailSnafu {})?;
-                cache
-                    .download_into_cache(&new_email, reader)
-                    .context(CacheNewEmailSnafu {})?;
-                pb.inc(1);
-                Ok(())
-            })
-            .collect()
-    });
-    result?;
-    pb.finish_with_message("done");
+        let pb = ProgressBar::new(new_emails_missing_from_cache.len() as u64);
+        let pool = rayon::ThreadPoolBuilder::new()
+            .num_threads(config.concurrent_downloads)
+            .build()
+            .context(CreateDownloadThreadPoolSnafu {})?;
+        let result: Result<Vec<_>, Error> = pool.install(|| {
+            new_emails_missing_from_cache
+                .into_par_iter()
+                .map(|new_email| {
+                    let remote_email = new_email.remote_email;
+                    let reader = remote
+                        .read_email_blob(&remote_email.blob_id)
+                        .context(DownloadRemoteEmailSnafu {})?;
+                    cache
+                        .download_into_cache(&new_email, reader)
+                        .context(CacheNewEmailSnafu {})?;
+                    pb.inc(1);
+                    Ok(())
+                })
+                .collect()
+        });
+        result?;
+        pb.finish_with_message("done");
+    }
 
     // Merge locally.
     //
@@ -359,6 +366,11 @@ fn try_main(stdout: &mut StandardStream) -> Result<(), Error> {
 
         // Symlink the new mail files into the maildir...
         for new_email in &new_emails {
+            debug!(
+                "Making symlink from `{}' to `{}'",
+                &new_email.cache_path.to_string_lossy(),
+                &new_email.maildir_path.to_string_lossy(),
+            );
             symlink_file(&new_email.cache_path, &new_email.maildir_path).context(
                 MakeMaildirSymlinkSnafu {
                     from: &new_email.cache_path,
@@ -367,53 +379,93 @@ fn try_main(stdout: &mut StandardStream) -> Result<(), Error> {
             )?;
         }
 
-        local.begin_atomic().context(BeginAtomicSnafu {})?;
+        let mut commit_changes = || -> Result<()> {
+            local.begin_atomic().context(BeginAtomicSnafu {})?;
 
-        // ...and add them to the database.
-        let new_local_emails = new_emails
-            .iter()
-            .map(|new_email| {
-                let local_email = local
-                    .add_new_email(&new_email)
-                    .context(AddLocalEmailSnafu {})?;
-                if let Some(e) = local_emails.get(&new_email.remote_email.id) {
-                    // Move the old message to the destroyed emails set.
-                    destroyed_local_emails.push(e);
+            // ...and add them to the database.
+            let new_local_emails = new_emails
+                .iter()
+                .map(|new_email| {
+                    let local_email = local
+                        .add_new_email(&new_email)
+                        .context(AddLocalEmailSnafu {})?;
+                    if let Some(e) = local_emails.get(&new_email.remote_email.id) {
+                        // Move the old message to the destroyed emails set.
+                        destroyed_local_emails.push(e);
+                    }
+                    Ok((local_email.id.clone(), local_email))
+                })
+                .collect::<Result<HashMap<_, _>>>()?;
+
+            // Update local emails with remote tags.
+            for remote_email in remote_emails.values() {
+                // Skip email which has been updated offline.
+                if updated_local_emails.contains_key(&remote_email.id) {
+                    continue;
                 }
-                Ok((local_email.id.clone(), local_email))
-            })
-            .collect::<Result<HashMap<_, _>>>()?;
 
-        // Update local emails with remote tags.
-        for remote_email in remote_emails.values() {
-            // Skip email which has been updated offline.
-            if updated_local_emails.contains_key(&remote_email.id) {
-                continue;
+                // Do it!
+                let local_email = [
+                    new_local_emails.get(&remote_email.id),
+                    local_emails.get(&remote_email.id),
+                ]
+                .into_iter()
+                .flatten()
+                .next();
+                match local_email {
+                    Some(x) => {
+                        x.update(remote_email, &mailboxes)
+                            .context(UpdateLocalEmailSnafu {})?;
+                    }
+                    None => {
+                        error!(
+                            "Could not find local email for updated remote ID {}",
+                            remote_email.id
+                        );
+                        return Err(Error::ProgrammerError {});
+                    }
+                }
             }
 
-            // Do it!
-            let local_email = new_local_emails
-                .get(&remote_email.id)
-                .unwrap_or_else(|| &local_emails[&remote_email.id]);
-            local_email
-                .update(remote_email, &mailboxes)
-                .context(UpdateLocalEmailSnafu {})?;
-        }
+            // Finally, remove the old messages from the database.
+            for destroyed_local_email in &destroyed_local_emails {
+                local
+                    .remove_email(*destroyed_local_email)
+                    .context(RemoveLocalEmailSnafu {})?;
+            }
 
-        // Finally, remove the old messages from the database.
-        for destroyed_local_email in &destroyed_local_emails {
-            local
-                .remove_email(*destroyed_local_email)
-                .context(RemoveLocalEmailSnafu {})?;
-        }
+            local.end_atomic().context(EndAtomicSnafu {})?;
+            Ok(())
+        };
 
-        local.end_atomic().context(EndAtomicSnafu {})?;
+        if let Err(e) = commit_changes() {
+            // Remove all the symlinks.
+            for new_email in &new_emails {
+                debug!(
+                    "Removing symlink `{}'",
+                    &new_email.maildir_path.to_string_lossy(),
+                );
+                if let Err(e) = fs::remove_file(&new_email.maildir_path) {
+                    warn!(
+                        "Could not remove symlink `{}': {e}",
+                        &new_email.maildir_path.to_string_lossy(),
+                    );
+                }
+            }
+            // Fail as normal.
+            return Err(e);
+        }
 
         // Now that the atomic database operation has been completed, do the
         // actual file operations.
 
         // Replace the symlinks with the real files.
         for new_email in &new_emails {
+            debug!(
+                "Moving mail from `{}' to `{}'",
+                &new_email.cache_path.to_string_lossy(),
+                &new_email.maildir_path.to_string_lossy(),
+            );
             fs::rename(&new_email.cache_path, &new_email.maildir_path).context(
                 RenameMailFileSnafu {
                     from: &new_email.cache_path,
@@ -521,7 +573,7 @@ fn main() {
             stderr
                 .set_color(ColorSpec::new().set_fg(Some(Color::Red)))
                 .ok();
-            writeln!(&mut stderr, "error: {}", err).ok();
+            writeln!(&mut stderr, "error: {err}").ok();
             1
         }
     });

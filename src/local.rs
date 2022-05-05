@@ -152,6 +152,7 @@ impl Local {
 
     /// Add the given email into the database.
     pub fn add_new_email(&self, new_email: &NewEmail) -> Result<Email, notmuch::Error> {
+        debug!("Adding new email: {:?}", new_email);
         let message = self.db.index_file(&new_email.maildir_path, None)?;
         Ok(Email {
             id: new_email.remote_email.id.clone(),
@@ -163,6 +164,7 @@ impl Local {
 
     /// Remove the given email file from notmuch's database and the disk.
     pub fn remove_email(&self, email: &Email) -> Result<(), notmuch::Error> {
+        debug!("Removing email: {:?}", email);
         self.db.remove_message(&email.path)
     }
 
@@ -189,6 +191,7 @@ impl Local {
     }
 }
 
+#[derive(Debug)]
 pub struct Email {
     pub id: jmap::Id,
     pub blob_id: jmap::Id,
@@ -231,6 +234,7 @@ impl Email {
         remote_email: &remote::Email,
         mailboxes: &HashMap<jmap::Id, remote::Mailbox>,
     ) -> Result<(), notmuch::Error> {
+        debug!("Updating local email: {:?}, {:?}", self, remote_email);
         // Replace all tags!
         self.message.freeze()?;
         self.message.remove_all_tags()?;
