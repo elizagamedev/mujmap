@@ -755,7 +755,7 @@ dependencies = [
 [[package]]
 name = "notmuch"
 version = "0.7.1"
-source = "git+https://github.com/elizagamedev/notmuch-rs?branch=duplicate_message_id#bf353027cc82c8ffa814e712acce35c5a8b39d64"
+source = "git+https://github.com/vhdirk/notmuch-rs#22cdcd63e02165e8521b4c47aaeae4e09f7c43fd"
 dependencies = [
  "from_variants",
  "libc",
