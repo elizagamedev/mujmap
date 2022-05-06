@@ -6,12 +6,13 @@ use std::{
 
 use crate::{
     config::{self, Config},
-    jmap::{self, Id, State},
+    jmap::{self, Id, MailboxRole, State},
+    local,
 };
-use indicatif::ProgressBar;
 use itertools::Itertools;
-use log::{trace, warn};
+use log::{debug, log_enabled, trace, warn};
 use serde::{de::DeserializeOwned, Serialize};
+use serde_json::Value;
 use snafu::prelude::*;
 use trust_dns_resolver::{error::ResolveError, Resolver};
 use uritemplate::UriTemplate;
@@ -54,10 +55,7 @@ pub enum Error {
     #[snafu(display("Could not interpret API response: {}", source))]
     Response { source: io::Error },
 
-    #[snafu(display("Could not serialize JSON request: {}", source))]
-    SerializeRequest { source: serde_json::Error },
-
-    #[snafu(display("Could not deserialize JSON response: {}", source))]
+    #[snafu(display("Could not deserialize API response: {}", source))]
     DeserializeResponse { source: serde_json::Error },
 
     #[snafu(display("Unexpected response from server"))]
@@ -69,8 +67,16 @@ pub enum Error {
     #[snafu(display("Could not read Email blob from server: {}", source))]
     ReadEmailBlobError { source: ureq::Error },
 
+    #[snafu(display("Could not find an archive mailbox"))]
+    NoArchive {},
+
     #[snafu(display("Mailbox contained an invalid path"))]
     InvalidMailboxPath {},
+
+    #[snafu(display("Failed to update messages on server: {:?}", not_updated))]
+    UpdateEmail {
+        not_updated: HashMap<jmap::Id, jmap::MethodResponseError>,
+    },
 }
 
 pub type Result<T, E = Error> = std::result::Result<T, E>;
@@ -153,13 +159,19 @@ impl HttpWrapper {
     }
 
     fn post<S: Serialize, D: DeserializeOwned>(&self, url: &str, body: S) -> Result<D> {
-        self.agent
+        let post = self
+            .agent
             .post(url)
             .set("Authorization", &self.authorization)
             .send_json(body)
-            .context(RequestSnafu {})?
-            .into_json()
-            .context(ResponseSnafu {})
+            .context(RequestSnafu {})?;
+        if log_enabled!(log::Level::Trace) {
+            let json = post.into_string().context(ResponseSnafu {})?;
+            trace!("Post response: {json}");
+            serde_json::from_str(&json).context(DeserializeResponseSnafu {})
+        } else {
+            post.into_json().context(ResponseSnafu {})
+        }
     }
 }
 
@@ -443,10 +455,12 @@ impl Remote {
 
     /// Given a list of `Email` IDs, return a map of their IDs to their
     /// properties.
-    pub fn get_emails<'a>(&mut self, email_ids: &HashSet<jmap::Id>) -> Result<HashMap<Id, Email>> {
+    pub fn get_emails<'a>(
+        &mut self,
+        email_ids: impl Iterator<Item = &'a jmap::Id>,
+    ) -> Result<HashMap<Id, Email>> {
         const GET_METHOD_ID: &str = "0";
 
-        let pb = ProgressBar::new(email_ids.len() as u64);
         let chunk_size = self.session.capabilities.core.max_objects_in_get as usize;
 
         let mut emails: HashMap<Id, Email> = HashMap::new();
@@ -480,15 +494,16 @@ impl Remote {
             for email in get_response.list {
                 emails.insert(email.id.clone(), Email::from_jmap_email(email));
             }
-
-            pb.inc(ids.len() as u64);
         }
-        pb.finish_with_message("done");
         Ok(emails)
     }
 
-    /// Return all `Mailbox`es.
-    pub fn get_mailboxes<'a>(&mut self) -> Result<HashMap<jmap::Id, Mailbox>> {
+    /// Return the ID of the archive mailbox and all `Mailbox`es relevant to
+    /// notmuch.
+    pub fn get_mailboxes<'a>(
+        &mut self,
+        tags_config: &config::Tags,
+    ) -> Result<(Id, HashMap<jmap::Id, Mailbox>, AvailableMailboxRoles)> {
         const GET_METHOD_ID: &str = "0";
 
         let account_id = &self.session.primary_accounts.mail;
@@ -520,61 +535,102 @@ impl Remote {
             .into_iter()
             .map(|x| (x.id.clone(), x))
             .collect();
-        Ok(jmap_mailboxes
+        // The archive is special. All email must belong to at least one
+        // mailbox, so if an email has no notmuch tags which correspond to other
+        // mailboxes, it must be added to the archive.
+        let archive = jmap_mailboxes
+            .values()
+            .filter(|x| x.role == Some(MailboxRole::Archive))
+            .map(|x| x.id.clone())
+            .next()
+            .ok_or(Error::NoArchive {})?;
+        // Collect the list of available special mailboxes.
+        let mut mailbox_roles: AvailableMailboxRoles = Default::default();
+        for mailbox in jmap_mailboxes.values() {
+            if let Some(role) = mailbox.role {
+                match role {
+                    MailboxRole::Drafts => mailbox_roles.draft = true,
+                    MailboxRole::Flagged => mailbox_roles.flagged = true,
+                    MailboxRole::Important => mailbox_roles.important = true,
+                    MailboxRole::Junk => mailbox_roles.spam = true,
+                    MailboxRole::Trash => mailbox_roles.deleted = true,
+                    _ => {}
+                }
+            }
+        }
+        // Returns true if the mailbox should be ignored if this role appears
+        // *any* point in the path heirarchy. Namely, if the user has explicitly
+        // disabled tags for this role.
+        let should_ignore_mailbox_role = |maybe_role: &Option<MailboxRole>| match maybe_role {
+            Some(x) => match x {
+                MailboxRole::Important => tags_config.important.is_empty(),
+                MailboxRole::Inbox => tags_config.inbox.is_empty(),
+                MailboxRole::Junk => tags_config.spam.is_empty(),
+                MailboxRole::Sent => tags_config.sent.is_empty(),
+                MailboxRole::Trash => tags_config.deleted.is_empty(),
+                _ => false,
+            },
+            None => false,
+        };
+        // Gather the mailbox objects.
+        let mailboxes = jmap_mailboxes
             .values()
             .map(|jmap_mailbox| {
-                Ok(match jmap_mailbox.role {
-                    // Ignore these mailboxes. They don't translate to useful
-                    // tags, and we can safely ignore them when patching
-                    // remotely.
-                    Some(jmap::MailboxRole::All)
-                    | Some(jmap::MailboxRole::Archive)
-                    | Some(jmap::MailboxRole::Subscribed)
-                    | Some(jmap::MailboxRole::Unknown) => None,
-                    _ => {
-                        // Determine full path, e.g. root-label/child-label.
-                        let mut path_ids = vec![&jmap_mailbox.id];
-                        let mut maybe_parent_id = &jmap_mailbox.parent_id;
-                        while let Some(parent_id) = maybe_parent_id {
-                            ensure!(!path_ids.contains(&parent_id), InvalidMailboxPathSnafu {});
-                            path_ids.push(&parent_id);
-
-                            let parent = jmap_mailboxes
-                                .get(&parent_id)
-                                .ok_or(Error::InvalidMailboxPath {})?;
-                            maybe_parent_id = &parent.parent_id;
-                        }
-                        Some(
-                            path_ids
-                                .into_iter()
-                                .rev()
-                                .map(|x| {
-                                    let mailbox = &jmap_mailboxes[&x];
-                                    mailbox
-                                        .role
-                                        .map(|x| {
-                                            if x == jmap::MailboxRole::Unknown {
-                                                &mailbox.name
-                                            } else {
-                                                x.as_str()
-                                            }
-                                        })
-                                        .unwrap_or(&mailbox.name)
-                                })
-                                .join("/"),
-                        )
-                    }
+                if jmap_mailbox.role == Some(MailboxRole::All)
+                    || jmap_mailbox.role == Some(MailboxRole::Archive)
+                    || should_ignore_mailbox_role(&jmap_mailbox.role)
+                {
+                    return Ok(None);
                 }
-                .map(|name| Mailbox {
-                    id: jmap_mailbox.id.clone(),
-                    name,
-                }))
+                // Determine full path, e.g. root-label/child-label/etc.
+                let mut path_ids = vec![&jmap_mailbox.id];
+                let mut maybe_parent_id = &jmap_mailbox.parent_id;
+                while let Some(parent_id) = maybe_parent_id {
+                    // Make sure there isn't a loop.
+                    ensure!(!path_ids.contains(&parent_id), InvalidMailboxPathSnafu {});
+                    path_ids.push(&parent_id);
+                    let parent = jmap_mailboxes
+                        .get(&parent_id)
+                        .ok_or(Error::InvalidMailboxPath {})?;
+                    if should_ignore_mailbox_role(&parent.role) {
+                        return Ok(None);
+                    }
+                    maybe_parent_id = &parent.parent_id;
+                }
+                let name = path_ids
+                    .into_iter()
+                    .rev()
+                    .map(|x| {
+                        let mailbox = &jmap_mailboxes[&x];
+                        mailbox
+                            .role
+                            .map(|x| match x {
+                                MailboxRole::Drafts => "draft",
+                                MailboxRole::Flagged => "flagged",
+                                MailboxRole::Important => &tags_config.important,
+                                MailboxRole::Inbox => &tags_config.inbox,
+                                MailboxRole::Junk => &tags_config.spam,
+                                MailboxRole::Sent => &tags_config.sent,
+                                MailboxRole::Trash => &tags_config.deleted,
+                                _ => &mailbox.name,
+                            })
+                            .unwrap_or(&mailbox.name)
+                    })
+                    .join("/");
+                Ok(Some((
+                    jmap_mailbox.id.clone(),
+                    Mailbox {
+                        id: jmap_mailbox.id.clone(),
+                        name,
+                        patch_key: format!("mailboxIds/{}", jmap_mailbox.id),
+                    },
+                )))
             })
             .collect::<Result<Vec<_>>>()?
             .into_iter()
             .flatten()
-            .map(|x| (x.id.clone(), x))
-            .collect())
+            .collect();
+        Ok((archive, mailboxes, mailbox_roles))
     }
 
     pub fn read_email_blob(&self, id: &Id) -> Result<impl Read + Send> {
@@ -586,6 +642,103 @@ impl Remote {
             .build();
 
         self.http_wrapper.get_reader(uri.as_str())
+    }
+
+    /// Update all emails on the server with keywords and mailbox IDs
+    /// corresponding to the local notmuch tags.
+    pub fn update(
+        &mut self,
+        local_emails: &HashMap<Id, local::Email>,
+        archive_id: &Id,
+        mailboxes: &HashMap<Id, Mailbox>,
+        mailbox_roles: &AvailableMailboxRoles,
+        tags_config: &config::Tags,
+    ) -> Result<()> {
+        // Build patches.
+        let archive_patch_key = format!("mailboxIds/{archive_id}");
+        let updates = local_emails
+            .iter()
+            .map(|(id, local_email)| {
+                // let remote_email = &remote_emails[&local_email.id];
+                let tags: HashSet<String> = local_email.message.tags().into_iter().collect();
+                let mut patch = HashMap::new();
+                fn as_value(b: bool) -> Value {
+                    if b {
+                        Value::Bool(true)
+                    } else {
+                        Value::Null
+                    }
+                }
+                // Keywords.
+                patch.insert("keywords/$draft", as_value(tags.contains("draft")));
+                patch.insert("keywords/$seen", as_value(!tags.contains("unread")));
+                patch.insert("keywords/$flagged", as_value(tags.contains("flagged")));
+                patch.insert("keywords/$answered", as_value(tags.contains("replied")));
+                patch.insert("keywords/$Forwarded", as_value(tags.contains("passed")));
+                if !mailbox_roles.spam && !tags_config.spam.is_empty() {
+                    let spam = tags.contains(&tags_config.spam);
+                    patch.insert("keywords/$Junk", as_value(spam));
+                    patch.insert("keywords/$NotJunk", as_value(!spam));
+                }
+                if !tags_config.phishing.is_empty() {
+                    patch.insert(
+                        "keywords/$Phishing",
+                        as_value(tags.contains(&tags_config.phishing)),
+                    );
+                }
+                // Mailboxes.
+                let mut must_archive = true;
+                for mailbox in mailboxes.values() {
+                    let contains = tags.contains(&mailbox.name);
+                    if contains {
+                        must_archive = false;
+                    }
+                    patch.insert(&mailbox.patch_key, as_value(contains));
+                }
+                patch.insert(&archive_patch_key, as_value(must_archive));
+                Ok((id, patch))
+            })
+            .collect::<Result<HashMap<&Id, HashMap<&str, Value>>>>()?;
+        debug!("Built patch for remote: {:?}", updates);
+
+        // Send it off into cyberspace~
+        const SET_METHOD_ID: &str = "0";
+
+        let chunk_size = self.session.capabilities.core.max_objects_in_set as usize;
+
+        for chunk in &updates.into_iter().chunks(chunk_size) {
+            let account_id = &self.session.primary_accounts.mail;
+            let mut response = self.request(jmap::Request {
+                using: &[jmap::CapabilityKind::Mail],
+                method_calls: &[jmap::RequestInvocation {
+                    call: jmap::MethodCall::EmailSet {
+                        set: jmap::MethodCallSet {
+                            account_id,
+                            if_in_state: None,
+                            create: None,
+                            update: Some(chunk.collect::<HashMap<_, _>>()),
+                            destroy: None,
+                        },
+                    },
+                    id: SET_METHOD_ID,
+                }],
+                created_ids: None,
+            })?;
+            self.update_session_state(&response.session_state)?;
+
+            if response.method_responses.len() != 1 {
+                return Err(Error::UnexpectedResponse);
+            }
+
+            let set_response =
+                expect_email_set(SET_METHOD_ID, response.method_responses.remove(0))?;
+
+            if let Some(not_updated) = set_response.not_updated {
+                return Err(Error::UpdateEmail { not_updated });
+            }
+        }
+
+        Ok(())
     }
 
     fn request<'a>(&self, request: jmap::Request<'a>) -> Result<jmap::Response> {
@@ -612,6 +765,17 @@ impl Remote {
     }
 }
 
+/// Enumerates the special mailboxes that are available for this particular
+/// server.
+#[derive(Debug, Default)]
+pub struct AvailableMailboxRoles {
+    pub deleted: bool,
+    pub draft: bool,
+    pub flagged: bool,
+    pub important: bool,
+    pub spam: bool,
+}
+
 /// An object which contains only the properties of a remote Email that mujmap
 /// cares about.
 #[derive(Debug)]
@@ -626,6 +790,7 @@ pub struct Email {
 pub struct Mailbox {
     pub id: Id,
     pub name: String,
+    pub patch_key: String,
 }
 
 impl Email {
@@ -686,6 +851,20 @@ fn expect_email_changes(
     }
     match invocation.call {
         jmap::MethodResponse::EmailChanges(changes) => Ok(changes),
+        jmap::MethodResponse::Error(error) => Err(Error::MethodError { error }),
+        _ => Err(Error::UnexpectedResponse),
+    }
+}
+
+fn expect_email_set(
+    id: &str,
+    invocation: jmap::ResponseInvocation,
+) -> Result<jmap::MethodResponseSet<jmap::EmptySetUpdated>> {
+    if invocation.id != id {
+        return Err(Error::UnexpectedResponse);
+    }
+    match invocation.call {
+        jmap::MethodResponse::EmailSet(set) => Ok(set),
         jmap::MethodResponse::Error(error) => Err(Error::MethodError { error }),
         _ => Err(Error::UnexpectedResponse),
     }

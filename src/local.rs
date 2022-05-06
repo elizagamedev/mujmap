@@ -1,4 +1,6 @@
+use crate::config;
 use crate::jmap;
+use crate::jmap::EmailKeyword;
 use crate::remote;
 use crate::NewEmail;
 use const_format::formatcp;
@@ -233,32 +235,75 @@ impl Email {
         &self,
         remote_email: &remote::Email,
         mailboxes: &HashMap<jmap::Id, remote::Mailbox>,
+        mailbox_roles: &remote::AvailableMailboxRoles,
+        tags_config: &config::Tags,
     ) -> Result<(), notmuch::Error> {
-        debug!("Updating local email: {:?}, {:?}", self, remote_email);
-        // Replace all tags!
-        self.message.freeze()?;
-        self.message.remove_all_tags()?;
-        // Keywords.
-        for keyword in &remote_email.keywords {
-            if let Some(tag) = match keyword {
-                jmap::EmailKeyword::Draft => Some("draft"),
-                jmap::EmailKeyword::Seen => None,
-                jmap::EmailKeyword::Flagged => Some("flagged"),
-                jmap::EmailKeyword::Answered => Some("replied"),
-                jmap::EmailKeyword::Forwarded => Some("passed"),
-                jmap::EmailKeyword::Unknown => unreachable!(),
-            } {
-                self.message.add_tag(tag)?;
+        // Keywords. Consider *only* keywords which are not explicitly disabled
+        // by the config and are not already covered by a mailbox.
+        fn none_if_empty(s: &str) -> Option<&str> {
+            if s.is_empty() {
+                None
+            } else {
+                Some(s)
             }
         }
-        if !remote_email.keywords.contains(&jmap::EmailKeyword::Seen) {
-            self.message.add_tag("unread")?;
+        let mut tags = Vec::new();
+        for keyword in &remote_email.keywords {
+            if let Some(tag) = match keyword {
+                EmailKeyword::Answered => Some("replied"),
+                EmailKeyword::Draft => {
+                    if mailbox_roles.draft {
+                        None
+                    } else {
+                        Some("draft")
+                    }
+                }
+                EmailKeyword::Flagged => {
+                    if mailbox_roles.flagged {
+                        None
+                    } else {
+                        Some("flagged")
+                    }
+                }
+                EmailKeyword::Forwarded => Some("passed"),
+                EmailKeyword::Important => {
+                    if mailbox_roles.important {
+                        None
+                    } else {
+                        none_if_empty(&tags_config.important)
+                    }
+                }
+                EmailKeyword::Phishing => none_if_empty(&tags_config.phishing),
+                _ => None,
+            } {
+                tags.push(tag);
+            }
+        }
+        if !mailbox_roles.spam
+            && !tags_config.spam.is_empty()
+            && remote_email.keywords.contains(&EmailKeyword::Junk)
+            && !remote_email.keywords.contains(&EmailKeyword::NotJunk)
+        {
+            tags.push(&tags_config.spam);
+        }
+        if !remote_email.keywords.contains(&EmailKeyword::Seen) {
+            tags.push("unread");
         }
         // Mailboxes.
         for id in &remote_email.mailbox_ids {
             if let Some(mailbox) = mailboxes.get(id) {
-                self.message.add_tag(&mailbox.name)?;
+                tags.push(&mailbox.name);
             }
+        }
+        // Replace all tags!
+        debug!(
+            "Updating local email: {:?}, {:?}, with tags: {tags:?}",
+            self, remote_email
+        );
+        self.message.freeze()?;
+        self.message.remove_all_tags()?;
+        for tag in tags {
+            self.message.add_tag(tag)?;
         }
         self.message.thaw()?;
         Ok(())

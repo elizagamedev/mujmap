@@ -69,6 +69,10 @@ impl<'de> Deserialize<'de> for ResponseInvocation {
                         seq.next_element::<MethodResponseChanges>()?
                             .ok_or(length_err)?,
                     )),
+                    "Email/set" => Ok(MethodResponse::EmailSet(
+                        seq.next_element::<MethodResponseSet<EmptySetUpdated>>()?
+                            .ok_or(length_err)?,
+                    )),
                     "Mailbox/get" => Ok(MethodResponse::MailboxGet(
                         seq.next_element::<MethodResponseGet<Mailbox>>()?
                             .ok_or(length_err)?,
@@ -83,6 +87,7 @@ impl<'de> Deserialize<'de> for ResponseInvocation {
                             "Email/get",
                             "Email/query",
                             "Email/changes",
+                            "Email/set",
                             "Mailbox/get",
                             "error",
                         ],
@@ -199,6 +204,53 @@ pub struct MethodResponseChanges {
     pub destroyed: Vec<Id>,
 }
 
+#[derive(Debug, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct MethodResponseSet<T> {
+    /// The id of the account used for the call.
+    pub account_id: Id,
+    /// The state string that would have been returned by `T/get` before making
+    /// the requested changes, or `None` if the server doesn’t know what the
+    /// previous state string was.
+    pub old_state: Option<State>,
+    /// The state string that will now be returned by `T/get`.
+    pub new_state: Option<State>,
+    /// A map of the creation id to an object containing any properties of the
+    /// created `T` object that were not sent by the client. This includes all
+    /// server-set properties (such as the id in most object types) and any
+    /// properties that were omitted by the client and thus set to a default by
+    /// the server.
+    ///
+    /// This argument is `None` if no `T` objects were successfully created.
+    pub created: Option<HashMap<Id, T>>,
+    /// The keys in this map are the ids of all `T`s that were successfully
+    /// updated.
+    ///
+    /// The value for each id is a `T` object containing any property that
+    /// changed in a way not explicitly requested by the PatchObject sent to the
+    /// server, or null if none. This lets the client know of any changes to
+    /// server-set or computed properties.
+    ///
+    /// This argument is `None` if no `T` objects were successfully updated.
+    pub updated: Option<HashMap<Id, T>>,
+    /// A list of `T` ids for records that were successfully destroyed, or
+    /// `None` if none.
+    pub destroyed: Option<Vec<Id>>,
+    /// A map of the creation id to a `MethodResponseError` object for each
+    /// record that failed to be created, or `None` if all successful.
+    pub not_created: Option<HashMap<Id, MethodResponseError>>,
+    /// A map of the `T` id to a `MethodResponseError` object for each record
+    /// that failed to be updated, or `None` if all successful.
+    pub not_updated: Option<HashMap<Id, MethodResponseError>>,
+    /// A map of the `T` id to a `MethodResponseError` object for each record
+    /// that failed to be destroyed, or `None` if all successful.
+    pub not_destroyed: Option<HashMap<Id, MethodResponseError>>,
+}
+
+/// Struct for updates in a call to `T/set` which we don't care about.
+#[derive(Debug, Deserialize)]
+pub struct EmptySetUpdated;
+
 /// If a method encounters an error, the appropriate error response MUST be
 /// inserted at the current point in the methodResponses array and, unless
 /// otherwise specified, further processing MUST NOT happen within that
@@ -224,6 +276,7 @@ pub struct Email {
     pub mailbox_ids: HashMap<Id, bool>,
 }
 
+/// https://www.iana.org/assignments/imap-jmap-keywords/imap-jmap-keywords.xhtml
 #[derive(Clone, Copy, Eq, PartialEq, Hash, Debug, Deserialize)]
 pub enum EmailKeyword {
     #[serde(rename = "$draft")]
@@ -236,6 +289,14 @@ pub enum EmailKeyword {
     Answered,
     #[serde(rename = "$Forwarded")]
     Forwarded,
+    #[serde(rename = "$Junk")]
+    Junk,
+    #[serde(rename = "$NotJunk")]
+    NotJunk,
+    #[serde(rename = "$Phishing")]
+    Phishing,
+    #[serde(rename = "$Important")]
+    Important,
     #[serde(other)]
     Unknown,
 }
@@ -281,31 +342,11 @@ pub enum MailboxRole {
     Junk,
     /// Sent mail.
     Sent,
-    /// The mailbox is subscribed to.
-    Subscribed,
     /// Messages the user has discarded.
     Trash,
-    /// As-of-yet defined roles.
+    /// As-of-yet defined roles, or roles we don't care about.
     #[serde(other)]
     Unknown,
-}
-
-impl MailboxRole {
-    pub fn as_str(&self) -> &'static str {
-        match *self {
-            MailboxRole::All => "all",
-            MailboxRole::Archive => "archive",
-            MailboxRole::Drafts => "draft",
-            MailboxRole::Flagged => "flagged",
-            MailboxRole::Important => "important",
-            MailboxRole::Inbox => "inbox",
-            MailboxRole::Junk => "spam",
-            MailboxRole::Sent => "sent",
-            MailboxRole::Subscribed => "subscribed",
-            MailboxRole::Trash => "deleted",
-            MailboxRole::Unknown => "YOU_SHOULD_NOT_SEE_THIS",
-        }
-    }
 }
 
 #[derive(Debug)]
@@ -313,6 +354,7 @@ pub enum MethodResponse {
     EmailGet(MethodResponseGet<Email>),
     EmailQuery(MethodResponseQuery),
     EmailChanges(MethodResponseChanges),
+    EmailSet(MethodResponseSet<EmptySetUpdated>),
 
     MailboxGet(MethodResponseGet<Mailbox>),
 
@@ -335,7 +377,7 @@ pub enum MethodResponseErrorKind {
     AnchorNotFound,
     /// The server forbids duplicates, and the record already exists in the
     /// target account. An existingId property of type Id MUST be included on
-    /// the SetError object with the id of the existing record.
+    /// the `MethodResponseError` object with the id of the existing record.
     AlreadyExists,
     /// The server cannot calculate the changes from the state string given by
     /// the client.

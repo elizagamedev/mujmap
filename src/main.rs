@@ -130,6 +130,9 @@ pub enum Error {
     #[snafu(display("Could not end atomic database operation: {}", source))]
     EndAtomic { source: notmuch::Error },
 
+    #[snafu(display("Could not push changes to JMAP server: {}", source))]
+    PushChanges { source: remote::Error },
+
     #[snafu(display("Programmer error!"))]
     ProgrammerError {},
 }
@@ -193,6 +196,7 @@ fn try_main(stdout: &mut StandardStream) -> Result<(), Error> {
     let mail_dir = args.path.unwrap_or_else(|| PathBuf::from("."));
 
     let config = Config::from_file(mail_dir.join("mujmap.toml")).context(OpenConfigFileSnafu {})?;
+    debug!("Using config: {:?}", config);
 
     // Load the intermediary state.
     let latest_state_filename = mail_dir.join("mujmap.state.json");
@@ -211,7 +215,13 @@ fn try_main(stdout: &mut StandardStream) -> Result<(), Error> {
     let mut remote = Remote::open(&config).context(OpenRemoteSnafu {})?;
 
     // List all remote mailboxes and convert them to notmuch tags.
-    let mailboxes = remote.get_mailboxes().context(IndexMailboxesSnafu {})?;
+    let (archive_id, mailboxes, mailbox_roles) = remote
+        .get_mailboxes(&config.tags)
+        .context(IndexMailboxesSnafu {})?;
+    debug!(
+        "Got mailboxes: archive_id={archive_id}, mailboxes.values()={:?}, mailbox_roles={mailbox_roles:?}",
+        mailboxes.values()
+    );
 
     // Query local database for all email.
     let local_emails = local.all_emails().context(IndexLocalEmailsSnafu {})?;
@@ -243,8 +253,7 @@ fn try_main(stdout: &mut StandardStream) -> Result<(), Error> {
                     if !updated.iter().all(|x| local_emails.contains_key(x)) {
                         warn!(
                             "Server sent an update which references an ID we don't know about, doing a full sync instead");
-                        let (_, updated, destroyed) = full_sync(&mut remote)?;
-                        Ok((state, updated, destroyed))
+                        full_sync(&mut remote)
                     } else {
                         updated.extend(created);
                         Ok((state, updated, destroyed))
@@ -263,12 +272,13 @@ fn try_main(stdout: &mut StandardStream) -> Result<(), Error> {
 
     // Retrieve the updated `Email` objects from the server.
     stdout.set_color(&info_color_spec).context(LogSnafu {})?;
-    writeln!(stdout, "Retrieving metadata...").context(LogSnafu {})?;
+    write!(stdout, "Retrieving metadata...").context(LogSnafu {})?;
     stdout.reset().context(LogSnafu {})?;
+    writeln!(stdout, " ({} possibly changed)", updated_ids.len()).context(LogSnafu {})?;
     stdout.flush().context(LogSnafu {})?;
 
     let remote_emails = remote
-        .get_emails(&updated_ids)
+        .get_emails(updated_ids.iter())
         .context(GetRemoteEmailsSnafu {})?;
 
     // Before merging, download the new files into the cache.
@@ -340,20 +350,32 @@ fn try_main(stdout: &mut StandardStream) -> Result<(), Error> {
     //
     // 5. Overwrite the symlinks we made earlier with the actual files from the
     // cache.
-    stdout.set_color(&info_color_spec).context(LogSnafu {})?;
-    writeln!(stdout, "Applying changes to notmuch database...").context(LogSnafu {})?;
-    stdout.reset().context(LogSnafu {})?;
-    stdout.flush().context(LogSnafu {})?;
-
     let notmuch_revision = get_notmuch_revision(
         local_emails.is_empty(),
         &local,
         latest_state.notmuch_revision,
         args.dry_run,
     )?;
-    let updated_local_emails = local
+    let updated_local_emails: HashMap<jmap::Id, local::Email> = local
         .all_emails_since(notmuch_revision)
-        .context(IndexLocalUpdatedEmailsSnafu {})?;
+        .context(IndexLocalUpdatedEmailsSnafu {})?
+        .into_iter()
+        // Filter out emails that were destroyed on the server.
+        .filter(|(id, _)| !destroyed_ids.contains(&id))
+        .collect();
+
+    stdout.set_color(&info_color_spec).context(LogSnafu {})?;
+    write!(stdout, "Applying changes to notmuch database...").context(LogSnafu {})?;
+    stdout.reset().context(LogSnafu {})?;
+    writeln!(
+        stdout,
+        " ({} new, {} changed, {} destroyed)",
+        new_emails.len(),
+        remote_emails.len(),
+        destroyed_ids.len()
+    )
+    .context(LogSnafu {})?;
+    stdout.flush().context(LogSnafu {})?;
 
     // Update local messages.
     if !args.dry_run {
@@ -411,20 +433,17 @@ fn try_main(stdout: &mut StandardStream) -> Result<(), Error> {
                 ]
                 .into_iter()
                 .flatten()
-                .next();
-                match local_email {
-                    Some(x) => {
-                        x.update(remote_email, &mailboxes)
-                            .context(UpdateLocalEmailSnafu {})?;
-                    }
-                    None => {
-                        error!(
-                            "Could not find local email for updated remote ID {}",
-                            remote_email.id
-                        );
-                        return Err(Error::ProgrammerError {});
-                    }
-                }
+                .next()
+                .ok_or_else(|| {
+                    error!(
+                        "Could not find local email for updated remote ID {}",
+                        remote_email.id
+                    );
+                    Error::ProgrammerError {}
+                })?;
+                local_email
+                    .update(remote_email, &mailboxes, &mailbox_roles, &config.tags)
+                    .context(UpdateLocalEmailSnafu {})?;
             }
 
             // Finally, remove the old messages from the database.
@@ -480,6 +499,25 @@ fn try_main(stdout: &mut StandardStream) -> Result<(), Error> {
                 path: &destroyed_local_email.path,
             })?;
         }
+    }
+
+    // Update remote messages.
+    if !args.dry_run {
+        stdout.set_color(&info_color_spec).context(LogSnafu {})?;
+        write!(stdout, "Applying changes to JMAP server...").context(LogSnafu {})?;
+        stdout.reset().context(LogSnafu {})?;
+        writeln!(stdout, " ({} changed)", updated_local_emails.len()).context(LogSnafu {})?;
+        stdout.flush().context(LogSnafu {})?;
+
+        remote
+            .update(
+                &updated_local_emails,
+                &archive_id,
+                &mailboxes,
+                &mailbox_roles,
+                &config.tags,
+            )
+            .context(PushChangesSnafu {})?;
     }
 
     // Record the final state for the next invocation.

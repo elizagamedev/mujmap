@@ -1,5 +1,6 @@
 use super::{Id, State};
 use serde::{ser::SerializeSeq, Serialize, Serializer};
+use serde_json::Value;
 use std::collections::HashMap;
 
 #[derive(Serialize)]
@@ -67,6 +68,9 @@ impl<'a> Serialize for RequestInvocation<'a> {
             MethodCall::EmailChanges { .. } => {
                 seq.serialize_element("Email/changes")?;
             }
+            MethodCall::EmailSet { .. } => {
+                seq.serialize_element("Email/set")?;
+            }
             MethodCall::MailboxGet { .. } => {
                 seq.serialize_element("Mailbox/get")?;
             }
@@ -97,6 +101,12 @@ pub enum MethodCall<'a> {
     EmailChanges {
         #[serde(flatten)]
         changes: MethodCallChanges<'a>,
+    },
+
+    #[serde(rename_all = "camelCase")]
+    EmailSet {
+        #[serde(flatten)]
+        set: MethodCallSet<'a, EmptyCreate>,
     },
 
     #[serde(rename_all = "camelCase")]
@@ -188,6 +198,78 @@ pub struct MethodCallChanges<'a> {
     #[serde(skip_serializing_if = "Option::is_none")]
     pub max_changes: Option<u64>,
 }
+
+#[derive(Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct MethodCallSet<'a, C> {
+    /// The id of the account to use.
+    pub account_id: &'a Id,
+    /// This is a state string as returned by the Foo/get method (representing
+    /// the state of all objects of this type in the account). If supplied, the
+    /// string must match the current state; otherwise, the method will be
+    /// aborted and a stateMismatch error returned. If null, any changes will be
+    /// applied to the current state.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub if_in_state: Option<&'a Id>,
+    /// A map of a creation id (a temporary id set by the client) to Foo
+    /// objects, or null if no objects are to be created.
+    ///
+    /// The Foo object type definition may define default values for properties.
+    /// Any such property may be omitted by the client.
+    ///
+    /// The client MUST omit any properties that may only be set by the server
+    /// (for example, the id property on most object types).
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub create: Option<HashMap<&'a Id, &'a C>>,
+    /// A map of an id to a Patch object to apply to the current `Foo` object
+    /// with that id, or `None` if no objects are to be updated.
+    ///
+    /// A `PatchObject` is of type `String[*]` and represents an unordered set
+    /// of patches. The keys are a path in JSON Pointer Format [@!RFC6901], with
+    /// an implicit leading “/” (i.e., prefix each key with “/” before applying
+    /// the JSON Pointer evaluation algorithm).
+    ///
+    /// All paths MUST also conform to the following restrictions; if there is
+    /// any violation, the update MUST be rejected with an invalidPatch error:
+    ///
+    /// * The pointer MUST NOT reference inside an array (i.e., you MUST NOT
+    ///   insert/delete from an array; the array MUST be replaced in its
+    ///   entirety instead).
+    /// * All parts prior to the last (i.e., the value after the final slash)
+    ///   MUST already exist on the object being patched.
+    /// * There MUST NOT be two patches in the PatchObject where the pointer of
+    ///   one is the prefix of the pointer of the other, e.g., “alerts/1/offset”
+    ///   and “alerts”.
+    ///
+    /// The value associated with each pointer determines how to apply that
+    /// patch:
+    ///
+    /// * If `None`, set to the default value if specified for this property;
+    ///   otherwise, remove the property from the patched object. If the key is
+    ///   not present in the parent, this a no-op.
+    /// * Anything else: The value to set for this property (this may be a
+    ///   replacement or addition to the object being patched).
+    ///
+    /// Any server-set properties MAY be included in the patch if their value is
+    /// identical to the current server value (before applying the patches to
+    /// the object). Otherwise, the update MUST be rejected with an
+    /// invalidProperties SetError.
+    ///
+    /// This patch definition is designed such that an entire `Foo` object is
+    /// also a valid `PatchObject`. The client may choose to optimise network
+    /// usage by just sending the diff or may send the whole object; the server
+    /// processes it the same either way.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub update: Option<HashMap<&'a Id, HashMap<&'a str, Value>>>,
+    /// A list of ids for `Foo` objects to permanently delete, or `None` if no
+    /// objects are to be destroyed.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub destroy: Option<Vec<&'a Id>>,
+}
+
+#[derive(Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct EmptyCreate;
 
 fn default<T: Default + PartialEq>(t: &T) -> bool {
     *t == Default::default()
