@@ -47,13 +47,13 @@ pub type Result<T, E = Error> = std::result::Result<T, E>;
 
 #[derive(Debug, Deserialize)]
 pub struct Config {
-    /// Username.
+    /// Username for basic HTTP authentication.
     pub username: String,
 
-    /// Shell command which will print a password to stdout.
+    /// Shell command which will print a password to stdout for basic HTTP authentication.
     pub password_command: String,
 
-    /// Hostname to connect to.
+    /// Fully qualified domain name of the JMAP service.
     ///
     /// mujmap looks up the JMAP SRV record for this host to determine the JMAP
     /// session URL. Mutually exclusive with `session_url`.
@@ -67,7 +67,8 @@ pub struct Config {
     /// Number of email files to download in parallel.
     ///
     /// This corresponds to the number of blocking OS threads that will be
-    /// created for HTTP download requests.
+    /// created for HTTP download requests. Increasing this number too high will
+    /// likely result in many failed connections.
     #[serde(default = "default_concurrent_downloads")]
     pub concurrent_downloads: usize,
 
@@ -220,7 +221,7 @@ fn default_phishing() -> String {
 }
 
 fn default_concurrent_downloads() -> usize {
-    32
+    8
 }
 
 fn default_timeout() -> u64 {

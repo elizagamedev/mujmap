@@ -1,0 +1,152 @@
+################################################################################
+## Required config
+
+## Username for basic HTTP authentication.
+
+username = "example@fastmail.com"
+
+## Shell command which will print a password to stdout for basic HTTP
+## authentication.
+
+password_command = "pass example@fastmail.com"
+
+## Fully qualified domain name of the JMAP service.
+##
+## mujmap looks up the JMAP SRV record for this host to determine the JMAP
+## session URL. Mutually exclusive with `session_url`.
+
+fqdn = "fastmail.com"
+
+## Session URL to connect to.
+##
+## Mutually exclusive with `fqdn`.
+
+# session_url = "https://jmap.fastmail.com/.well-known/jmap
+
+
+################################################################################
+## Optional config
+
+## Number of email files to download in parallel.
+##
+## This corresponds to the number of blocking OS threads that will be created for
+## HTTP download requests. Increasing this number too high will likely result in
+## many failed connections.
+
+# concurrent_downloads = 8
+
+## Number of seconds before timing out on a stalled connection.
+
+# timeout = 5
+
+## Number of retries to establish an HTTP request. 0 means infinite.
+
+# retries = 5
+
+
+################################################################################
+## Tag config
+##
+## Customize the names and synchronization behaviors of notmuch tags with JMAP
+## keywords and mailboxes. You can most likely leave these alone if you prefer
+## the notmuch defaults, unless you would like to specifically ignore a tag.
+##
+## BEWARE of changing any of these settings *after* you already have a nice and
+## happy notmuch instance up and running! If you want to make changes here, your
+## best option is to perform the following steps:
+##
+## 1. Before changing to the new config, make sure you've committed all pending
+## changes by running mujmap.
+##
+## 2. Move all mail from the maildir into the mujmap cache directory, which is
+## in XDG_CACHE_DIR/mujmap on Linux, ~/Library/Caches/sh.eliza.mujmap on macOS,
+## and %APPDATA%/mujmap/cache on Windows. Rename each file so that they follow
+## the pattern !home!username!path!to!maildir!XXX.YYY, where each ! replaces the
+## path separator of the original file location, and XXX and YYY are the mail
+## and blob IDs. If you have notmuch configured to sync tags with maildir flags,
+## be sure to remove the trailing ":2," and everything past it on each filename.
+##
+## 3. Because step 2 is annoying to do, you can just delete them and have mujmap
+## redownload them later if you'd prefer.
+##
+## 4. Run `notmuch new --no-hooks` so that all of the messages you just removed
+## are also removed from the database.
+##
+## 5. Delete the "mujmap.state.json" file in the maildir to force a full sync.
+##
+## 6. Change all the configuration options you'd like, then run mujmap. It
+## should synchronize all the messages properly now.
+
+## Tag for notmuch to use for messages stored in the mailbox labeled with the
+## `Inbox` name attribute.
+##
+## If set to an empty string, this mailbox *and its child mailboxes* are not
+## synchronized with a tag.
+
+# inbox = "inbox"
+
+## Tag for notmuch to use for messages stored in the mailbox labeled with the
+## `Trash` name attribute.
+##
+## This configuration option is called `deleted` instead of `trash` because
+## notmuch's UIs all prefer "deleted" by default.
+##
+## If set to an empty string, this mailbox *and its child mailboxes* are not
+## synchronized with a tag.
+
+# deleted = "deleted"
+
+## Tag for notmuch to use for messages stored in the mailbox labeled with the
+## `Sent` name attribute.
+##
+## If set to an empty string, this mailbox *and its child mailboxes* are not
+## synchronized with a tag.
+
+# sent = "sent"
+
+## Tag for notmuch to use for messages stored in the mailbox labeled with the
+## `Junk` name attribute and/or with the `$Junk` keyword, *except* for messages
+## with the `$NotJunk` keyword.
+##
+## The combination of these three traits becomes a bit tangled, so further
+## explanation is warranted. Most email services in the modern day, especially
+## those that support JMAP, provide a dedicated "Spam" or "Junk" mailbox which
+## has the `Junk` name attribute mentioned above. However, there may exist
+## services which do not have this mailbox, but still support the `$Junk` and
+## `$NotJunk` keywords. mujmap behaves in the following way:
+##
+## * If the mailbox exists, it becomes the sole source of truth. mujmap
+##   will entirely disregard the `$Junk` and `$NotJunk` keywords.
+## * If the mailbox does not exist, messages with the `$Junk` keyword *that
+##   do not also have* a `$NotJunk` keyword are tagged as spam. When
+##   pushing, both `$Junk` and `$NotJunk` are set appropriately.
+##
+## This configuration option is called `spam` instead of `junk` despite all of
+## the aforementioned specifications preferring "junk" because notmuch's UIs all
+## prefer "spam" by default.
+##
+## If set to an empty string, this mailbox, *its child mailboxes*, and these
+## keywords are not synchronized with a tag.
+
+# spam = "spam"
+
+## Tag for notmuch to use for messages stored in the mailbox labeled with the
+## `Important` name attribute and/or with the `$Important` keyword.
+##
+## * If a mailbox with the `Important` role exists, this is used as the
+##   sole source of truth when pulling for tagging messages as "important".
+## * If not, the `$Important` keyword is considered instead.
+## * In both cases, the `$Important` keyword is set on the server when
+##   pushing. In the first case, it's also copied to the `Important`
+##   mailbox.
+##
+## If set to an empty string, this mailbox, *its child mailboxes*, and this
+## keyword are not synchronized with a tag.
+
+# important = "important"
+
+## Tag for notmuch to use for the IANA `$Phishing` keyword.
+##
+## If set to an empty string, this keyword is not synchronized with a tag.
+
+# phishing = "phishing"
