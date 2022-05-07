@@ -29,6 +29,9 @@ pub enum Error {
     #[snafu(display("Must specify at least 1 for `concurrent_downloads'"))]
     ConcurrentDownloadsIsZero {},
 
+    #[snafu(display("`directory_separator' must not be empty"))]
+    EmptyDirectorySeparator {},
+
     #[snafu(display("Could not execute password command `{}': {}", command, source))]
     ExecutePasswordCommand { command: String, source: io::Error },
 
@@ -87,6 +90,18 @@ pub struct Config {
 
 #[derive(Debug, Deserialize)]
 pub struct Tags {
+    /// Translate all mailboxes to lowercase names when mapping to notmuch tags.
+    ///
+    /// Defaults to `false`.
+    #[serde(default = "default_lowercase")]
+    pub lowercase: bool,
+
+    /// Directory separator for mapping notmuch tags to maildirs.
+    ///
+    /// Defaults to `"/"`.
+    #[serde(default = "default_directory_separator")]
+    pub directory_separator: String,
+
     /// Tag for notmuch to use for messages stored in the mailbox labeled with the [Inbox name
     /// attribute](https://www.rfc-editor.org/rfc/rfc8621.html).
     ///
@@ -177,6 +192,8 @@ pub struct Tags {
 impl Default for Tags {
     fn default() -> Self {
         Self {
+            lowercase: default_lowercase(),
+            directory_separator: default_directory_separator(),
             inbox: default_inbox(),
             deleted: default_deleted(),
             sent: default_sent(),
@@ -185,6 +202,14 @@ impl Default for Tags {
             phishing: default_phishing(),
         }
     }
+}
+
+fn default_lowercase() -> bool {
+    false
+}
+
+fn default_directory_separator() -> String {
+    "/".to_owned()
 }
 
 fn default_inbox() -> String {
@@ -240,6 +265,10 @@ impl Config {
         ensure!(
             config.concurrent_downloads > 0,
             ConcurrentDownloadsIsZeroSnafu {}
+        );
+        ensure!(
+            !config.tags.directory_separator.is_empty(),
+            EmptyDirectorySeparatorSnafu {}
         );
         Ok(config)
     }

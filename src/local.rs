@@ -233,8 +233,7 @@ impl Email {
     pub fn update(
         &self,
         remote_email: &remote::Email,
-        mailboxes: &HashMap<jmap::Id, remote::Mailbox>,
-        mailbox_roles: &remote::AvailableMailboxRoles,
+        mailboxes: &remote::Mailboxes,
         tags_config: &config::Tags,
     ) -> Result<(), notmuch::Error> {
         // Keywords. Consider *only* keywords which are not explicitly disabled by the config and
@@ -251,14 +250,14 @@ impl Email {
             if let Some(tag) = match keyword {
                 EmailKeyword::Answered => Some("replied"),
                 EmailKeyword::Draft => {
-                    if mailbox_roles.draft {
+                    if mailboxes.roles.draft {
                         None
                     } else {
                         Some("draft")
                     }
                 }
                 EmailKeyword::Flagged => {
-                    if mailbox_roles.flagged {
+                    if mailboxes.roles.flagged {
                         None
                     } else {
                         Some("flagged")
@@ -266,7 +265,7 @@ impl Email {
                 }
                 EmailKeyword::Forwarded => Some("passed"),
                 EmailKeyword::Important => {
-                    if mailbox_roles.important {
+                    if mailboxes.roles.important {
                         None
                     } else {
                         none_if_empty(&tags_config.important)
@@ -278,7 +277,7 @@ impl Email {
                 tags.push(tag);
             }
         }
-        if !mailbox_roles.spam
+        if !mailboxes.roles.spam
             && !tags_config.spam.is_empty()
             && remote_email.keywords.contains(&EmailKeyword::Junk)
             && !remote_email.keywords.contains(&EmailKeyword::NotJunk)
@@ -290,7 +289,7 @@ impl Email {
         }
         // Mailboxes.
         for id in &remote_email.mailbox_ids {
-            if let Some(mailbox) = mailboxes.get(id) {
+            if let Some(mailbox) = mailboxes.mailboxes_by_id.get(id) {
                 tags.push(&mailbox.name);
             }
         }

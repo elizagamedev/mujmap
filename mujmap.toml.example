@@ -77,6 +77,16 @@ fqdn = "fastmail.com"
 ## 6. Change all the configuration options you'd like, then run mujmap. It
 ## should synchronize all the messages properly now.
 
+[tags]
+
+## Translate all mailboxes to lowercase names when mapping to notmuch tags.
+
+# lowercase = false
+
+## Directory separator for mapping notmuch tags to maildirs.
+
+# directory_separator = "/"
+
 ## Tag for notmuch to use for messages stored in the mailbox labeled with the
 ## `Inbox` name attribute.
 ##

@@ -109,3 +109,5 @@ include:
     HTTP](https://en.wikipedia.org/wiki/Basic_access_authentication)
 -   Support multiple account IDs on the same JMAP server (not sure where to find
     this in practice)
+-   Synchronize sieve mail filters with the upcoming [JMAP for Sieve
+    Scripts](https://datatracker.ietf.org/doc/draft-ietf-jmap-sieve/) standard

@@ -222,13 +222,10 @@ fn try_main(stdout: &mut StandardStream) -> Result<(), Error> {
     let mut remote = Remote::open(&config).context(OpenRemoteSnafu {})?;
 
     // List all remote mailboxes and convert them to notmuch tags.
-    let (archive_id, mailboxes, mailbox_roles) = remote
+    let mailboxes = remote
         .get_mailboxes(&config.tags)
         .context(IndexMailboxesSnafu {})?;
-    debug!(
-        "Got mailboxes: archive_id={archive_id}, mailboxes.values()={:?}, mailbox_roles={mailbox_roles:?}",
-        mailboxes.values()
-    );
+    debug!("Got mailboxes: {:?}", mailboxes);
 
     // Query local database for all email.
     let local_emails = local.all_emails().context(IndexLocalEmailsSnafu {})?;
@@ -444,7 +441,7 @@ fn try_main(stdout: &mut StandardStream) -> Result<(), Error> {
                     Error::ProgrammerError {}
                 })?;
                 local_email
-                    .update(remote_email, &mailboxes, &mailbox_roles, &config.tags)
+                    .update(remote_email, &mailboxes, &config.tags)
                     .context(UpdateLocalEmailSnafu {})?;
             }
 
@@ -511,13 +508,7 @@ fn try_main(stdout: &mut StandardStream) -> Result<(), Error> {
         stdout.flush().context(LogSnafu {})?;
 
         remote
-            .update(
-                &updated_local_emails,
-                &archive_id,
-                &mailboxes,
-                &mailbox_roles,
-                &config.tags,
-            )
+            .update(&updated_local_emails, &mailboxes, &config.tags)
             .context(PushChangesSnafu {})?;
     }
 

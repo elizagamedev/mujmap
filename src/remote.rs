@@ -494,11 +494,8 @@ impl Remote {
         Ok(emails)
     }
 
-    /// Return the ID of the archive mailbox and all `Mailbox`es relevant to notmuch.
-    pub fn get_mailboxes<'a>(
-        &mut self,
-        tags_config: &config::Tags,
-    ) -> Result<(Id, HashMap<jmap::Id, Mailbox>, AvailableMailboxRoles)> {
+    /// Return the `Mailboxes` of the server.
+    pub fn get_mailboxes<'a>(&mut self, tags_config: &config::Tags) -> Result<Mailboxes> {
         const GET_METHOD_ID: &str = "0";
 
         let account_id = &self.session.primary_accounts.mail;
@@ -530,28 +527,31 @@ impl Remote {
             .into_iter()
             .map(|x| (x.id.clone(), x))
             .collect();
+
         // The archive is special. All email must belong to at least one mailbox, so if an email has
         // no notmuch tags which correspond to other mailboxes, it must be added to the archive.
-        let archive = jmap_mailboxes
+        let archive_id = jmap_mailboxes
             .values()
             .filter(|x| x.role == Some(MailboxRole::Archive))
             .map(|x| x.id.clone())
             .next()
             .ok_or(Error::NoArchive {})?;
+
         // Collect the list of available special mailboxes.
-        let mut mailbox_roles: AvailableMailboxRoles = Default::default();
+        let mut roles: AvailableMailboxRoles = Default::default();
         for mailbox in jmap_mailboxes.values() {
             if let Some(role) = mailbox.role {
                 match role {
-                    MailboxRole::Drafts => mailbox_roles.draft = true,
-                    MailboxRole::Flagged => mailbox_roles.flagged = true,
-                    MailboxRole::Important => mailbox_roles.important = true,
-                    MailboxRole::Junk => mailbox_roles.spam = true,
-                    MailboxRole::Trash => mailbox_roles.deleted = true,
+                    MailboxRole::Drafts => roles.draft = true,
+                    MailboxRole::Flagged => roles.flagged = true,
+                    MailboxRole::Important => roles.important = true,
+                    MailboxRole::Junk => roles.spam = true,
+                    MailboxRole::Trash => roles.deleted = true,
                     _ => {}
                 }
             }
         }
+
         // Returns true if the mailbox should be ignored if this role appears *any* point in the
         // path heirarchy. Namely, if the user has explicitly disabled tags for this role.
         let should_ignore_mailbox_role = |maybe_role: &Option<MailboxRole>| match maybe_role {
@@ -565,8 +565,14 @@ impl Remote {
             },
             None => false,
         };
+
+        let lowercase_names: HashMap<&Id, String> = jmap_mailboxes
+            .iter()
+            .map(|(id, mailbox)| (id, mailbox.name.to_lowercase()))
+            .collect();
+
         // Gather the mailbox objects.
-        let mailboxes = jmap_mailboxes
+        let mailboxes_by_id = jmap_mailboxes
             .values()
             .map(|jmap_mailbox| {
                 if jmap_mailbox.role == Some(MailboxRole::All)
@@ -598,18 +604,25 @@ impl Remote {
                         mailbox
                             .role
                             .map(|x| match x {
-                                MailboxRole::Drafts => "draft",
-                                MailboxRole::Flagged => "flagged",
-                                MailboxRole::Important => &tags_config.important,
-                                MailboxRole::Inbox => &tags_config.inbox,
-                                MailboxRole::Junk => &tags_config.spam,
-                                MailboxRole::Sent => &tags_config.sent,
-                                MailboxRole::Trash => &tags_config.deleted,
-                                _ => &mailbox.name,
+                                MailboxRole::Drafts => Some("draft"),
+                                MailboxRole::Flagged => Some("flagged"),
+                                MailboxRole::Important => Some(tags_config.important.as_str()),
+                                MailboxRole::Inbox => Some(tags_config.inbox.as_str()),
+                                MailboxRole::Junk => Some(tags_config.spam.as_str()),
+                                MailboxRole::Sent => Some(tags_config.sent.as_str()),
+                                MailboxRole::Trash => Some(tags_config.deleted.as_str()),
+                                _ => None,
                             })
-                            .unwrap_or(&mailbox.name)
+                            .flatten()
+                            .unwrap_or_else(|| {
+                                if tags_config.lowercase {
+                                    &lowercase_names[&x]
+                                } else {
+                                    &mailbox.name
+                                }
+                            })
                     })
-                    .join("/");
+                    .join(&tags_config.directory_separator);
                 Ok(Some((
                     jmap_mailbox.id.clone(),
                     Mailbox {
@@ -623,7 +636,11 @@ impl Remote {
             .into_iter()
             .flatten()
             .collect();
-        Ok((archive, mailboxes, mailbox_roles))
+        Ok(Mailboxes {
+            archive_id,
+            mailboxes_by_id,
+            roles,
+        })
     }
 
     pub fn read_email_blob(&self, id: &Id) -> Result<impl Read + Send> {
@@ -642,13 +659,11 @@ impl Remote {
     pub fn update(
         &mut self,
         local_emails: &HashMap<Id, local::Email>,
-        archive_id: &Id,
-        mailboxes: &HashMap<Id, Mailbox>,
-        mailbox_roles: &AvailableMailboxRoles,
+        mailboxes: &Mailboxes,
         tags_config: &config::Tags,
     ) -> Result<()> {
         // Build patches.
-        let archive_patch_key = format!("mailboxIds/{archive_id}");
+        let archive_patch_key = format!("mailboxIds/{}", mailboxes.archive_id);
         let updates = local_emails
             .iter()
             .map(|(id, local_email)| {
@@ -667,7 +682,7 @@ impl Remote {
                 patch.insert("keywords/$flagged", as_value(tags.contains("flagged")));
                 patch.insert("keywords/$answered", as_value(tags.contains("replied")));
                 patch.insert("keywords/$Forwarded", as_value(tags.contains("passed")));
-                if !mailbox_roles.spam && !tags_config.spam.is_empty() {
+                if !mailboxes.roles.spam && !tags_config.spam.is_empty() {
                     let spam = tags.contains(&tags_config.spam);
                     patch.insert("keywords/$Junk", as_value(spam));
                     patch.insert("keywords/$NotJunk", as_value(!spam));
@@ -680,7 +695,7 @@ impl Remote {
                 }
                 // Mailboxes.
                 let mut must_archive = true;
-                for mailbox in mailboxes.values() {
+                for mailbox in mailboxes.mailboxes_by_id.values() {
                     let contains = tags.contains(&mailbox.name);
                     if contains {
                         must_archive = false;
@@ -755,6 +770,18 @@ impl Remote {
         }
         Ok(())
     }
+}
+
+/// Contains processed mailbox data.
+#[derive(Debug)]
+pub struct Mailboxes {
+    /// The ID of the archive mailbox. Any mail which does not belong to at least one other mailbox
+    /// is instead assigned to this mailbox.
+    pub archive_id: Id,
+    /// A map of IDs to their corresponding mailboxes.
+    pub mailboxes_by_id: HashMap<Id, Mailbox>,
+    /// An enumeration of what mailbox roles this JMAP server supports.
+    pub roles: AvailableMailboxRoles,
 }
 
 /// Enumerates the special mailboxes that are available for this particular server.
