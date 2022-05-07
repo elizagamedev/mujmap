@@ -55,8 +55,8 @@ pub struct Config {
 
     /// Fully qualified domain name of the JMAP service.
     ///
-    /// mujmap looks up the JMAP SRV record for this host to determine the JMAP
-    /// session URL. Mutually exclusive with `session_url`.
+    /// mujmap looks up the JMAP SRV record for this host to determine the JMAP session URL.
+    /// Mutually exclusive with `session_url`.
     pub fqdn: Option<String>,
 
     /// Session URL to connect to.
@@ -66,9 +66,8 @@ pub struct Config {
 
     /// Number of email files to download in parallel.
     ///
-    /// This corresponds to the number of blocking OS threads that will be
-    /// created for HTTP download requests. Increasing this number too high will
-    /// likely result in many failed connections.
+    /// This corresponds to the number of blocking OS threads that will be created for HTTP download
+    /// requests. Increasing this number too high will likely result in many failed connections.
     #[serde(default = "default_concurrent_downloads")]
     pub concurrent_downloads: usize,
 
@@ -80,94 +79,86 @@ pub struct Config {
     #[serde(default = "default_retries")]
     pub retries: usize,
 
-    /// Customize the names and synchronization behaviors of notmuch tags with
-    /// JMAP keywords and mailboxes.
+    /// Customize the names and synchronization behaviors of notmuch tags with JMAP keywords and
+    /// mailboxes.
     #[serde(default = "Default::default")]
     pub tags: Tags,
 }
 
 #[derive(Debug, Deserialize)]
 pub struct Tags {
-    /// Tag for notmuch to use for messages stored in the mailbox labeled with
-    /// the [Inbox name attribute](https://www.rfc-editor.org/rfc/rfc8621.html).
+    /// Tag for notmuch to use for messages stored in the mailbox labeled with the [Inbox name
+    /// attribute](https://www.rfc-editor.org/rfc/rfc8621.html).
     ///
-    /// If set to an empty string, this mailbox *and its child mailboxes* are
-    /// not synchronized with a tag.
+    /// If set to an empty string, this mailbox *and its child mailboxes* are not synchronized with
+    /// a tag.
     ///
     /// Defaults to `"inbox"`.
     #[serde(default = "default_inbox")]
     pub inbox: String,
 
-    /// Tag for notmuch to use for messages stored in the mailbox labeled with
-    /// the [Trash name attribute](https://www.rfc-editor.org/rfc/rfc6154.html).
+    /// Tag for notmuch to use for messages stored in the mailbox labeled with the [Trash name
+    /// attribute](https://www.rfc-editor.org/rfc/rfc6154.html).
     ///
-    /// This configuration option is called `deleted` instead of `trash` because
-    /// notmuch's UIs all prefer "deleted" by default.
+    /// This configuration option is called `deleted` instead of `trash` because notmuch's UIs all
+    /// prefer "deleted" by default.
     ///
-    /// If set to an empty string, this mailbox *and its child mailboxes* are
-    /// not synchronized with a tag.
+    /// If set to an empty string, this mailbox *and its child mailboxes* are not synchronized with
+    /// a tag.
     ///
     /// Defaults to `"deleted"`.
     #[serde(default = "default_deleted")]
     pub deleted: String,
 
-    /// Tag for notmuch to use for messages stored in the mailbox labeled with
-    /// the [`Sent` name
+    /// Tag for notmuch to use for messages stored in the mailbox labeled with the [`Sent` name
     /// attribute](https://www.rfc-editor.org/rfc/rfc6154.html).
     ///
-    /// If set to an empty string, this mailbox *and its child mailboxes* are
-    /// not synchronized with a tag.
+    /// If set to an empty string, this mailbox *and its child mailboxes* are not synchronized with
+    /// a tag.
     ///
     /// Defaults to `"sent"`.
     #[serde(default = "default_sent")]
     pub sent: String,
 
-    /// Tag for notmuch to use for messages stored in the mailbox labeled with
-    /// the [`Junk` name attribute](https://www.rfc-editor.org/rfc/rfc8621.html)
-    /// and/or with the [`$Junk`
-    /// keyword](https://www.iana.org/assignments/imap-jmap-keywords/junk/junk-template),
-    /// except for messages with the [`$NotJunk`
+    /// Tag for notmuch to use for messages stored in the mailbox labeled with the [`Junk` name
+    /// attribute](https://www.rfc-editor.org/rfc/rfc8621.html) and/or with the [`$Junk`
+    /// keyword](https://www.iana.org/assignments/imap-jmap-keywords/junk/junk-template), except for
+    /// messages with the [`$NotJunk`
     /// keyword](https://www.iana.org/assignments/imap-jmap-keywords/notjunk/notjunk-template).
     ///
-    /// The combination of these three traits becomes a bit tangled, so further
-    /// explanation is warranted. Most email services in the modern day,
-    /// especially those that support JMAP, provide a dedicated "Spam" or "Junk"
-    /// mailbox which has the `Junk` name attribute mentioned above. However,
-    /// there may exist services which do not have this mailbox, but still
-    /// support the `$Junk` and `$NotJunk` keywords. mujmap behaves in the
-    /// following way:
+    /// The combination of these three traits becomes a bit tangled, so further explanation is
+    /// warranted. Most email services in the modern day, especially those that support JMAP,
+    /// provide a dedicated "Spam" or "Junk" mailbox which has the `Junk` name attribute mentioned
+    /// above. However, there may exist services which do not have this mailbox, but still support
+    /// the `$Junk` and `$NotJunk` keywords. mujmap behaves in the following way:
     ///
-    /// * If the mailbox exists, it becomes the sole source of truth. mujmap
-    ///   will entirely disregard the `$Junk` and `$NotJunk` keywords.
-    /// * If the mailbox does not exist, messages with the `$Junk` keyword *that
-    ///   do not also have* a `$NotJunk` keyword are tagged as spam. When
-    ///   pushing, both `$Junk` and `$NotJunk` are set appropriately.
+    /// * If the mailbox exists, it becomes the sole source of truth. mujmap will entirely disregard
+    /// the `$Junk` and `$NotJunk` keywords. * If the mailbox does not exist, messages with the
+    /// `$Junk` keyword *that do not also have* a `$NotJunk` keyword are tagged as spam. When
+    /// pushing, both `$Junk` and `$NotJunk` are set appropriately.
     ///
-    /// This configuration option is called `spam` instead of `junk` despite all
-    /// of the aforementioned specifications preferring "junk" because notmuch's
-    /// UIs all prefer "spam" by default.
+    /// This configuration option is called `spam` instead of `junk` despite all of the
+    /// aforementioned specifications preferring "junk" because notmuch's UIs all prefer "spam" by
+    /// default.
     ///
-    /// If set to an empty string, this mailbox, *its child mailboxes*, and
-    /// these keywords are not synchronized with a tag.
+    /// If set to an empty string, this mailbox, *its child mailboxes*, and these keywords are not
+    /// synchronized with a tag.
     ///
     /// Defaults to `"spam"`.
     #[serde(default = "default_spam")]
     pub spam: String,
 
-    /// Tag for notmuch to use for messages stored in the mailbox labeled with
-    /// the [`Important` name
-    /// attribute](https://www.rfc-editor.org/rfc/rfc8457.html) and/or with the
-    /// [`$Important` keyword](https://www.rfc-editor.org/rfc/rfc8457.html).
+    /// Tag for notmuch to use for messages stored in the mailbox labeled with the [`Important` name
+    /// attribute](https://www.rfc-editor.org/rfc/rfc8457.html) and/or with the [`$Important`
+    /// keyword](https://www.rfc-editor.org/rfc/rfc8457.html).
     ///
-    /// * If a mailbox with the `Important` role exists, this is used as the
-    ///   sole source of truth when pulling for tagging messages as "important".
-    /// * If not, the `$Important` keyword is considered instead.
-    /// * In both cases, the `$Important` keyword is set on the server when
-    ///   pushing. In the first case, it's also copied to the `Important`
-    ///   mailbox.
+    /// * If a mailbox with the `Important` role exists, this is used as the sole source of truth
+    /// when pulling for tagging messages as "important". * If not, the `$Important` keyword is
+    /// considered instead. * In both cases, the `$Important` keyword is set on the server when
+    /// pushing. In the first case, it's also copied to the `Important` mailbox.
     ///
-    /// If set to an empty string, this mailbox, *its child mailboxes*, and this
-    /// keyword are not synchronized with a tag.
+    /// If set to an empty string, this mailbox, *its child mailboxes*, and this keyword are not
+    /// synchronized with a tag.
     ///
     /// Defaults to `"important"`.
     #[serde(default = "default_important")]

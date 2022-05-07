@@ -1,8 +1,16 @@
+#![doc = include_str!("../README.md")]
+
+/// Command line arguments.
 mod args;
+/// Local cache interface.
 mod cache;
+/// Configuration file options.
 mod config;
+/// Miniature JMAP API.
 mod jmap;
+/// Local notmuch database interface.
 mod local;
+/// Remote JMAP interface.
 mod remote;
 
 use args::Args;
@@ -141,8 +149,7 @@ pub type Result<T, E = Error> = std::result::Result<T, E>;
 
 #[derive(Serialize, Deserialize)]
 pub struct LatestState {
-    /// Latest revision of the notmuch database since the last time mujmap was
-    /// run.
+    /// Latest revision of the notmuch database since the last time mujmap was run.
     pub notmuch_revision: Option<u64>,
     /// Latest JMAP Email state returned by `Email/get`.
     pub jmap_state: Option<jmap::State>,
@@ -226,9 +233,8 @@ fn try_main(stdout: &mut StandardStream) -> Result<(), Error> {
     // Query local database for all email.
     let local_emails = local.all_emails().context(IndexLocalEmailsSnafu {})?;
 
-    // Function which performs a full sync, i.e. a sync which considers all
-    // remote IDs as updated, and determines destroyed IDs by finding the
-    // difference of all remote IDs from all local IDs.
+    // Function which performs a full sync, i.e. a sync which considers all remote IDs as updated,
+    // and determines destroyed IDs by finding the difference of all remote IDs from all local IDs.
     let full_sync =
         |remote: &mut Remote| -> Result<(jmap::State, HashSet<jmap::Id>, HashSet<jmap::Id>)> {
             let (state, updated_ids) = remote.all_email_ids().context(IndexRemoteEmailsSnafu {})?;
@@ -239,17 +245,16 @@ fn try_main(stdout: &mut StandardStream) -> Result<(), Error> {
             Ok((state, updated_ids, destroyed_ids))
         };
 
-    // Create lists of updated and destroyed `Email` IDs. This is done in one of
-    // two ways, depending on if we have a working JMAP `Email` state.
+    // Create lists of updated and destroyed `Email` IDs. This is done in one of two ways, depending
+    // on if we have a working JMAP `Email` state.
     let (state, updated_ids, destroyed_ids) = latest_state
         .jmap_state
         .map(|jmap_state| {
             match remote.changed_email_ids(jmap_state) {
                 Ok((state, created, mut updated, destroyed)) => {
                     debug!("Remote changes: state={state}, created={created:?}, updated={updated:?}, destroyed={destroyed:?}");
-                    // If we have something in the updated set that isn't in the
-                    // local database, something must have gone wrong somewhere.
-                    // Do a full sync instead.
+                    // If we have something in the updated set that isn't in the local database,
+                    // something must have gone wrong somewhere. Do a full sync instead.
                     if !updated.iter().all(|x| local_emails.contains_key(x)) {
                         warn!(
                             "Server sent an update which references an ID we don't know about, doing a full sync instead");
@@ -333,23 +338,20 @@ fn try_main(stdout: &mut StandardStream) -> Result<(), Error> {
 
     // Merge locally.
     //
-    // 1. Symlink the cached messages that were previously downloaded into the
-    // maildir. We will replace these symlinks with the actual files once the
-    // atomic sync is complete.
+    // 1. Symlink the cached messages that were previously downloaded into the maildir. We will
+    // replace these symlinks with the actual files once the atomic sync is complete.
     //
-    // 2. Add new messages to the database by indexing these symlinks. This is
-    // also done for existing messages which have new blob IDs.
+    // 2. Add new messages to the database by indexing these symlinks. This is also done for
+    // existing messages which have new blob IDs.
     //
-    // 3. Update the tags of all local messages *except* the ones which had been
-    // modified locally since mujmap was last run. Neither JMAP nor notmuch
-    // support looking at message history, so if both the local message and the
-    // remote message have been flagged as "updated" since the last sync, we
-    // prefer to overwrite remote tags with notmuch's tags.
+    // 3. Update the tags of all local messages *except* the ones which had been modified locally
+    // since mujmap was last run. Neither JMAP nor notmuch support looking at message history, so if
+    // both the local message and the remote message have been flagged as "updated" since the last
+    // sync, we prefer to overwrite remote tags with notmuch's tags.
     //
     // 4. Remove messages with destroyed IDs or updated blob IDs.
     //
-    // 5. Overwrite the symlinks we made earlier with the actual files from the
-    // cache.
+    // 5. Overwrite the symlinks we made earlier with the actual files from the cache.
     let notmuch_revision = get_notmuch_revision(
         local_emails.is_empty(),
         &local,
@@ -379,8 +381,8 @@ fn try_main(stdout: &mut StandardStream) -> Result<(), Error> {
 
     // Update local messages.
     if !args.dry_run {
-        // Collect the local messages which will be destroyed. We will add to
-        // this list any messages with new blob IDs.
+        // Collect the local messages which will be destroyed. We will add to this list any messages
+        // with new blob IDs.
         let mut destroyed_local_emails: Vec<&local::Email> = destroyed_ids
             .into_iter()
             .flat_map(|x| local_emails.get(&x))
@@ -475,8 +477,7 @@ fn try_main(stdout: &mut StandardStream) -> Result<(), Error> {
             return Err(e);
         }
 
-        // Now that the atomic database operation has been completed, do the
-        // actual file operations.
+        // Now that the atomic database operation has been completed, do the actual file operations.
 
         // Replace the symlinks with the real files.
         for new_email in &new_emails {

@@ -29,18 +29,16 @@ pub enum Error {
 pub type Result<T, E = Error> = std::result::Result<T, E>;
 
 pub struct Cache {
-    /// The path to mujmap's cache, where emails are downloaded before being
-    /// placed in the maildir.
+    /// The path to mujmap's cache, where emails are downloaded before being placed in the maildir.
     cache_dir: PathBuf,
     /// The prefix to prepend to files in the cache.
     ///
-    /// Cached blobs are stored as full paths in the same format that Emacs uses
-    /// to store backup files, i.e. the path of the filename with each ! doubled
-    /// and each directory separator replaced with a !. This is done because the
-    /// JMAP spec does not specify that IDs should be globally unique across
-    /// accounts, and regardless, the user might configure multiple instances of
-    /// mujmap to manage multiple accounts on different services. As a result,
-    /// the cached files look something like this:
+    /// Cached blobs are stored as full paths in the same format that Emacs uses to store backup
+    /// files, i.e. the path of the filename with each ! doubled and each directory separator
+    /// replaced with a !. This is done because the JMAP spec does not specify that IDs should be
+    /// globally unique across accounts, and regardless, the user might configure multiple instances
+    /// of mujmap to manage multiple accounts on different services. As a result, the cached files
+    /// look something like this:
     ///
     /// `!home!username!Maildir!username@example.com!cur!XxXxXx.YyYyYy`
     cached_file_prefix: String,
@@ -57,9 +55,8 @@ impl Cache {
         // Ensure the cache dir exists.
         fs::create_dir_all(&cache_dir).context(CreateCacheDirSnafu { path: cache_dir })?;
 
-        // Create the cache filename prefix for this particular maildir. More
-        // information about this is found in the documentation for
-        // `Local::cached_file_prefix`.
+        // Create the cache filename prefix for this particular maildir. More information about this
+        // is found in the documentation for `Local::cached_file_prefix`.
         let mut cached_file_prefix = mail_cur_dir
             .as_ref()
             .to_string_lossy()
@@ -84,11 +81,10 @@ impl Cache {
 
     /// Save the data from the given reader into the cache.
     ///
-    /// This is done first by downloading to a temporary file so that in the
-    /// event of a catastrophic failure, e.g. sudden power outage, there will
-    /// (hopefully less likely) be half-downloaded mail files. JMAP doesn't
-    /// expose any means of checking data integrity other than comparing blob
-    /// IDs, so it's important we take every precaution.
+    /// This is done first by downloading to a temporary file so that in the event of a catastrophic
+    /// failure, e.g. sudden power outage, there will (hopefully less likely) be half-downloaded
+    /// mail files. JMAP doesn't expose any means of checking data integrity other than comparing
+    /// blob IDs, so it's important we take every precaution.
     pub fn download_into_cache(&self, new_email: &NewEmail, mut reader: impl Read) -> Result<()> {
         // Download to temporary file...
         let temporary_file_path = self.cache_dir.join(format!(

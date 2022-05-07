@@ -269,13 +269,12 @@ impl Remote {
         })
     }
 
-    /// Return a list of all `Email` IDs that exist on the server and a state
-    /// `String` returned by `Email/get`.
+    /// Return a list of all `Email` IDs that exist on the server and a state `String` returned by
+    /// `Email/get`.
     ///
-    /// This function calls `Email/get` before `Email/query` in case any new
-    /// `Email` objects appear in-between the call to `Email/query` and future
-    /// calls to `Email/changes`. If done in the opposite order, an `Email`
-    /// might slip through the cracks.
+    /// This function calls `Email/get` before `Email/query` in case any new `Email` objects appear
+    /// in-between the call to `Email/query` and future calls to `Email/changes`. If done in the
+    /// opposite order, an `Email` might slip through the cracks.
     pub fn all_email_ids(&mut self) -> Result<(State, HashSet<Id>)> {
         const GET_METHOD_ID: &str = "0";
         const QUERY_METHOD_ID: &str = "1";
@@ -332,14 +331,13 @@ impl Remote {
             return Err(Error::UnexpectedResponse);
         }
 
-        // No need to continue processing if we have received fewer than the
-        // limit imposed.
+        // No need to continue processing if we have received fewer than the limit imposed.
         if (query_response.ids.len() as u64) < limit {
             return Ok((get_response.state, query_response.ids.into_iter().collect()));
         }
 
-        // If the server imposed a limit on our query, we must continue to make
-        // requests until we have collected all of the IDs.
+        // If the server imposed a limit on our query, we must continue to make requests until we
+        // have collected all of the IDs.
         let mut email_ids = query_response.ids;
 
         loop {
@@ -397,8 +395,8 @@ impl Remote {
         Ok((get_response.state, email_ids.into_iter().collect()))
     }
 
-    /// Given an `Email/get` state, return the latest `Email/get` state and a
-    /// list of new/updated `Email` IDs and destroyed `Email` IDs.
+    /// Given an `Email/get` state, return the latest `Email/get` state and a list of new/updated
+    /// `Email` IDs and destroyed `Email` IDs.
     pub fn changed_email_ids(
         &mut self,
         state: State,
@@ -446,15 +444,13 @@ impl Remote {
             }
         }
 
-        // It's possible something got put in both created and updated; make it
-        // mutually exclusive.
+        // It's possible something got put in both created and updated; make it mutually exclusive.
         updated_ids.retain(|x| !created_ids.contains(x));
 
         Ok((state, created_ids, updated_ids, destroyed_ids))
     }
 
-    /// Given a list of `Email` IDs, return a map of their IDs to their
-    /// properties.
+    /// Given a list of `Email` IDs, return a map of their IDs to their properties.
     pub fn get_emails<'a>(
         &mut self,
         email_ids: impl Iterator<Item = &'a jmap::Id>,
@@ -498,8 +494,7 @@ impl Remote {
         Ok(emails)
     }
 
-    /// Return the ID of the archive mailbox and all `Mailbox`es relevant to
-    /// notmuch.
+    /// Return the ID of the archive mailbox and all `Mailbox`es relevant to notmuch.
     pub fn get_mailboxes<'a>(
         &mut self,
         tags_config: &config::Tags,
@@ -535,9 +530,8 @@ impl Remote {
             .into_iter()
             .map(|x| (x.id.clone(), x))
             .collect();
-        // The archive is special. All email must belong to at least one
-        // mailbox, so if an email has no notmuch tags which correspond to other
-        // mailboxes, it must be added to the archive.
+        // The archive is special. All email must belong to at least one mailbox, so if an email has
+        // no notmuch tags which correspond to other mailboxes, it must be added to the archive.
         let archive = jmap_mailboxes
             .values()
             .filter(|x| x.role == Some(MailboxRole::Archive))
@@ -558,9 +552,8 @@ impl Remote {
                 }
             }
         }
-        // Returns true if the mailbox should be ignored if this role appears
-        // *any* point in the path heirarchy. Namely, if the user has explicitly
-        // disabled tags for this role.
+        // Returns true if the mailbox should be ignored if this role appears *any* point in the
+        // path heirarchy. Namely, if the user has explicitly disabled tags for this role.
         let should_ignore_mailbox_role = |maybe_role: &Option<MailboxRole>| match maybe_role {
             Some(x) => match x {
                 MailboxRole::Important => tags_config.important.is_empty(),
@@ -644,8 +637,8 @@ impl Remote {
         self.http_wrapper.get_reader(uri.as_str())
     }
 
-    /// Update all emails on the server with keywords and mailbox IDs
-    /// corresponding to the local notmuch tags.
+    /// Update all emails on the server with keywords and mailbox IDs corresponding to the local
+    /// notmuch tags.
     pub fn update(
         &mut self,
         local_emails: &HashMap<Id, local::Email>,
@@ -659,7 +652,6 @@ impl Remote {
         let updates = local_emails
             .iter()
             .map(|(id, local_email)| {
-                // let remote_email = &remote_emails[&local_email.id];
                 let tags: HashSet<String> = local_email.message.tags().into_iter().collect();
                 let mut patch = HashMap::new();
                 fn as_value(b: bool) -> Value {
@@ -765,8 +757,7 @@ impl Remote {
     }
 }
 
-/// Enumerates the special mailboxes that are available for this particular
-/// server.
+/// Enumerates the special mailboxes that are available for this particular server.
 #[derive(Debug, Default)]
 pub struct AvailableMailboxRoles {
     pub deleted: bool,
@@ -776,8 +767,7 @@ pub struct AvailableMailboxRoles {
     pub spam: bool,
 }
 
-/// An object which contains only the properties of a remote Email that mujmap
-/// cares about.
+/// An object which contains only the properties of a remote Email that mujmap cares about.
 #[derive(Debug)]
 pub struct Email {
     pub id: Id,

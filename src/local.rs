@@ -85,8 +85,8 @@ impl Local {
         )
         .context(OpenDatabaseSnafu {})?;
 
-        // Build new absolute path resolving all relative paths. Check to make
-        // sure it's actually a subdirectory of the notmuch root path.
+        // Build new absolute path resolving all relative paths. Check to make sure it's actually a
+        // subdirectory of the notmuch root path.
         let mail_dir = mail_dir.as_ref().absolutize().context(AbsolutizeSnafu {})?;
 
         if !mail_dir.starts_with(db.path()) {
@@ -131,8 +131,7 @@ impl Local {
         self.query(&self.all_mail_query)
     }
 
-    /// Return all `Email`s that mujmap owns which were modified since the given
-    /// database revision.
+    /// Return all `Email`s that mujmap owns which were modified since the given database revision.
     pub fn all_emails_since(&self, last_revision: u64) -> Result<HashMap<jmap::Id, Email>> {
         self.query(&format!(
             "{} and lastmod:{}..{}",
@@ -209,8 +208,8 @@ impl Email {
         message
             .filenames()
             .into_iter()
-            // Get the first filename in our mail dir. It's possible there are
-            // duplicate mail files in notmuch's database which we don't own.
+            // Get the first filename in our mail dir. It's possible there are duplicate mail files
+            // in notmuch's database which we don't own.
             .filter(|x| x.starts_with(mail_cur_dir))
             .next()
             .and_then(|path| {
@@ -238,8 +237,8 @@ impl Email {
         mailbox_roles: &remote::AvailableMailboxRoles,
         tags_config: &config::Tags,
     ) -> Result<(), notmuch::Error> {
-        // Keywords. Consider *only* keywords which are not explicitly disabled
-        // by the config and are not already covered by a mailbox.
+        // Keywords. Consider *only* keywords which are not explicitly disabled by the config and
+        // are not already covered by a mailbox.
         fn none_if_empty(s: &str) -> Option<&str> {
             if s.is_empty() {
                 None
