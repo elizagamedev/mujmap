@@ -652,6 +652,7 @@ impl Remote {
         tags: &[String],
         tags_config: &config::Tags,
     ) -> Result<()> {
+        let mut created_tags_by_id = Vec::new();
         let mut created_ids_by_tag = HashMap::new();
         let mut create_calls = Vec::new();
 
@@ -662,6 +663,7 @@ impl Remote {
             account_id: &'a Id,
             mailboxes: &Mailboxes,
             tags_config: &'a config::Tags,
+            created_tags_by_id: &'a mut Vec<String>,
             created_ids_by_tag: &'a mut HashMap<String, Id>,
             create_calls: &'a mut Vec<(jmap::Id, jmap::MailboxCreate)>,
         ) -> Id {
@@ -672,6 +674,7 @@ impl Remote {
                         account_id,
                         mailboxes,
                         tags_config,
+                        created_tags_by_id,
                         created_ids_by_tag,
                         create_calls,
                     );
@@ -699,6 +702,7 @@ impl Remote {
                     name: name.to_owned(),
                 },
             ));
+            created_tags_by_id.push(tag.to_string());
             created_ids_by_tag.insert(tag.to_string(), ref_id.clone());
             ref_id
         }
@@ -706,15 +710,15 @@ impl Remote {
         // mailboxes created in the same request. JMAP does support this, but these creation
         // requests must be ordered from parent to child. One way to guarantee this in a
         // not-so-clever way is to sort them by the length of the tag.
-        let tags: Vec<_> = tags.iter().sorted_unstable_by_key(|x| x.len()).collect();
         let (calls_len, response) = {
             let account_id = &self.session.primary_accounts.mail;
-            for tag in tags.iter() {
+            for tag in tags.iter().sorted_unstable_by_key(|x| x.len()) {
                 get_or_create_mailbox_id(
                     &tag,
                     account_id,
                     mailboxes,
                     tags_config,
+                    &mut created_tags_by_id,
                     &mut created_ids_by_tag,
                     &mut create_calls,
                 );
@@ -760,7 +764,7 @@ impl Remote {
             let invocation_id = format!("{}", create_id);
             let set = expect_mailbox_set(&invocation_id, invocation)?;
             let mut created = set.created.ok_or(Error::UnexpectedResponse)?;
-            let tag = tags[create_id].to_owned();
+            let tag = created_tags_by_id[create_id].to_owned();
             let mailbox = created
                 .remove(&Id(invocation_id))
                 .ok_or(Error::UnexpectedResponse)?;
@@ -1043,7 +1047,7 @@ fn expect_mailbox_get(
 fn expect_mailbox_set(
     id: &str,
     invocation: jmap::ResponseInvocation,
-) -> Result<jmap::MethodResponseSet<jmap::Mailbox>> {
+) -> Result<jmap::MethodResponseSet<jmap::GenericObjectWithId>> {
     if invocation.id != id {
         return Err(Error::UnexpectedResponse);
     }

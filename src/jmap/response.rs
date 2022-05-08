@@ -75,7 +75,7 @@ impl<'de> Deserialize<'de> for ResponseInvocation {
                             .ok_or(length_err)?,
                     )),
                     "Mailbox/set" => Ok(MethodResponse::MailboxSet(
-                        seq.next_element::<MethodResponseSet<Mailbox>>()?
+                        seq.next_element::<MethodResponseSet<GenericObjectWithId>>()?
                             .ok_or(length_err)?,
                     )),
                     "error" => Ok(MethodResponse::Error(
@@ -236,6 +236,14 @@ pub struct MethodResponseSet<T> {
 #[derive(Debug, Deserialize)]
 pub struct EmptySetUpdated;
 
+/// Struct for interpreting created IDs.
+#[derive(Debug, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct GenericObjectWithId {
+    /// The id of the Mailbox.
+    pub id: Id,
+}
+
 /// If a method encounters an error, the appropriate error response MUST be inserted at the current
 /// point in the methodResponses array and, unless otherwise specified, further processing MUST NOT
 /// happen within that method call.
@@ -340,7 +348,7 @@ pub enum MethodResponse {
     EmailSet(MethodResponseSet<EmptySetUpdated>),
 
     MailboxGet(MethodResponseGet<Mailbox>),
-    MailboxSet(MethodResponseSet<Mailbox>),
+    MailboxSet(MethodResponseSet<GenericObjectWithId>),
 
     Error(MethodResponseError),
 }
