@@ -71,6 +71,9 @@ impl<'a> Serialize for RequestInvocation<'a> {
             MethodCall::MailboxGet { .. } => {
                 seq.serialize_element("Mailbox/get")?;
             }
+            MethodCall::MailboxSet { .. } => {
+                seq.serialize_element("Mailbox/set")?;
+            }
         }
 
         seq.serialize_element(&self.call)?;
@@ -110,6 +113,12 @@ pub enum MethodCall<'a> {
     MailboxGet {
         #[serde(flatten)]
         get: MethodCallGet<'a>,
+    },
+
+    #[serde(rename_all = "camelCase")]
+    MailboxSet {
+        #[serde(flatten)]
+        set: MethodCallSet<'a, MailboxCreate>,
     },
 }
 
@@ -193,13 +202,13 @@ pub struct MethodCallChanges<'a> {
 pub struct MethodCallSet<'a, C> {
     /// The id of the account to use.
     pub account_id: &'a Id,
-    /// This is a state string as returned by the Foo/get method (representing the state of all
+    /// This is a state string as returned by the `Foo/get` method (representing the state of all
     /// objects of this type in the account). If supplied, the string must match the current state;
-    /// otherwise, the method will be aborted and a stateMismatch error returned. If null, any
+    /// otherwise, the method will be aborted and a stateMismatch error returned. If `None`, any
     /// changes will be applied to the current state.
     #[serde(skip_serializing_if = "Option::is_none")]
     pub if_in_state: Option<&'a Id>,
-    /// A map of a creation id (a temporary id set by the client) to Foo objects, or null if no
+    /// A map of a creation id (a temporary id set by the client) to `Foo` objects, or `None` if no
     /// objects are to be created.
     ///
     /// The Foo object type definition may define default values for properties. Any such property
@@ -251,6 +260,21 @@ pub struct MethodCallSet<'a, C> {
 #[derive(Serialize)]
 #[serde(rename_all = "camelCase")]
 pub struct EmptyCreate;
+
+#[derive(Debug, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct MailboxCreate {
+    /// The Mailbox id for the parent of this `Mailbox`, or `None` if this Mailbox is at the top
+    /// level. Mailboxes form acyclic graphs (forests) directed by the child-to-parent relationship.
+    /// There MUST NOT be a loop.
+    pub parent_id: Option<Id>,
+    /// User-visible name for the Mailbox, e.g., “Inbox”. This MUST be a Net-Unicode string
+    /// \[[RFC5198](https://datatracker.ietf.org/doc/html/rfc5198)\] of at least 1 character in
+    /// length, subject to the maximum size given in the capability object. There MUST NOT be two
+    /// sibling Mailboxes with both the same parent and the same name. Servers MAY reject names that
+    /// violate server policy (e.g., names containing a slash (/) or control characters).
+    pub name: String,
+}
 
 fn default<T: Default + PartialEq>(t: &T) -> bool {
     *t == Default::default()

@@ -141,6 +141,11 @@ impl Local {
         ))
     }
 
+    /// Return all tags in the database.
+    pub fn all_tags(&self) -> Result<notmuch::Tags, notmuch::Error> {
+        self.db.all_tags()
+    }
+
     /// Begin atomic database operation.
     pub fn begin_atomic(&self) -> Result<(), notmuch::Error> {
         self.db.begin_atomic()
@@ -290,7 +295,7 @@ impl Email {
         // Mailboxes.
         for id in &remote_email.mailbox_ids {
             if let Some(mailbox) = mailboxes.mailboxes_by_id.get(id) {
-                tags.push(&mailbox.name);
+                tags.push(&mailbox.tag);
             }
         }
         // Replace all tags!

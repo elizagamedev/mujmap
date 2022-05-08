@@ -572,7 +572,7 @@ impl Remote {
             .collect();
 
         // Gather the mailbox objects.
-        let mailboxes_by_id = jmap_mailboxes
+        let mailboxes_by_id: HashMap<Id, Mailbox> = jmap_mailboxes
             .values()
             .map(|jmap_mailbox| {
                 if jmap_mailbox.role == Some(MailboxRole::All)
@@ -596,7 +596,7 @@ impl Remote {
                     }
                     maybe_parent_id = &parent.parent_id;
                 }
-                let name = path_ids
+                let tag = path_ids
                     .into_iter()
                     .rev()
                     .map(|x| {
@@ -625,22 +625,151 @@ impl Remote {
                     .join(&tags_config.directory_separator);
                 Ok(Some((
                     jmap_mailbox.id.clone(),
-                    Mailbox {
-                        id: jmap_mailbox.id.clone(),
-                        name,
-                        patch_key: format!("mailboxIds/{}", jmap_mailbox.id),
-                    },
+                    Mailbox::new(jmap_mailbox.id.clone(), tag),
                 )))
             })
             .collect::<Result<Vec<_>>>()?
             .into_iter()
             .flatten()
             .collect();
+        let ids_by_tag: HashMap<_, _> = mailboxes_by_id
+            .iter()
+            .map(|(id, mailbox)| (mailbox.tag.clone(), id.clone()))
+            .collect();
+
         Ok(Mailboxes {
             archive_id,
             mailboxes_by_id,
+            ids_by_tag,
             roles,
         })
+    }
+
+    /// Create mailboxes on the server which correspond to the given list of notmuch tags.
+    pub fn create_mailboxes(
+        &mut self,
+        mailboxes: &mut Mailboxes,
+        tags: &[String],
+        tags_config: &config::Tags,
+    ) -> Result<()> {
+        let mut created_ids_by_tag = HashMap::new();
+        let mut create_calls = Vec::new();
+
+        // Creates ancestors for this tag recursively if they do not exist, then returns the ID of
+        // its parent.
+        fn get_or_create_mailbox_id<'a>(
+            tag: &'a str,
+            account_id: &'a Id,
+            mailboxes: &Mailboxes,
+            tags_config: &'a config::Tags,
+            created_ids_by_tag: &'a mut HashMap<String, Id>,
+            create_calls: &'a mut Vec<(jmap::Id, jmap::MailboxCreate)>,
+        ) -> Id {
+            let (parent_id, name) = match tag.rfind(&tags_config.directory_separator) {
+                Some(index) => {
+                    let parent_id = get_or_create_mailbox_id(
+                        &tag[..index],
+                        account_id,
+                        mailboxes,
+                        tags_config,
+                        created_ids_by_tag,
+                        create_calls,
+                    );
+                    let name = &tag[index + 1..];
+                    (Some(parent_id), name)
+                }
+                None => (None, tag),
+            };
+            // Return this ID if it already exists.
+            if let Some(id) = [created_ids_by_tag.get(tag), mailboxes.ids_by_tag.get(tag)]
+                .into_iter()
+                .flatten()
+                .next()
+            {
+                return id.clone();
+            }
+            // Create it!
+            let id = create_calls.len();
+            let create_id = Id(format!("{}", id));
+            let ref_id = Id(format!("#{}", id));
+            create_calls.push((
+                create_id,
+                jmap::MailboxCreate {
+                    parent_id,
+                    name: name.to_owned(),
+                },
+            ));
+            created_ids_by_tag.insert(tag.to_string(), ref_id.clone());
+            ref_id
+        }
+        // Build the requests. This function may create mailboxes which are children of other
+        // mailboxes created in the same request. JMAP does support this, but these creation
+        // requests must be ordered from parent to child. One way to guarantee this in a
+        // not-so-clever way is to sort them by the length of the tag.
+        let tags: Vec<_> = tags.iter().sorted_unstable_by_key(|x| x.len()).collect();
+        let (calls_len, response) = {
+            let account_id = &self.session.primary_accounts.mail;
+            for tag in tags.iter() {
+                get_or_create_mailbox_id(
+                    &tag,
+                    account_id,
+                    mailboxes,
+                    tags_config,
+                    &mut created_ids_by_tag,
+                    &mut create_calls,
+                );
+            }
+
+            debug!("Built calls for creating mailboxes: {:?}", create_calls);
+
+            let method_calls: Vec<_> = create_calls
+                .iter()
+                .map(|(id, mailbox_create)| {
+                    let mut create = HashMap::new();
+                    create.insert(id, mailbox_create);
+                    jmap::RequestInvocation {
+                        call: jmap::MethodCall::MailboxSet {
+                            set: jmap::MethodCallSet {
+                                account_id,
+                                if_in_state: None,
+                                create: Some(create),
+                                update: None,
+                                destroy: None,
+                            },
+                        },
+                        id: &id.0,
+                    }
+                })
+                .collect();
+
+            let response = self.request(jmap::Request {
+                using: &[jmap::CapabilityKind::Mail],
+                method_calls: &method_calls,
+                created_ids: None,
+            })?;
+            (method_calls.len(), response)
+        };
+        self.update_session_state(&response.session_state)?;
+
+        if response.method_responses.len() != calls_len {
+            return Err(Error::UnexpectedResponse);
+        }
+
+        // Insert the newly created mailboxes into the `Mailboxes`.
+        for (create_id, invocation) in response.method_responses.into_iter().enumerate() {
+            let invocation_id = format!("{}", create_id);
+            let set = expect_mailbox_set(&invocation_id, invocation)?;
+            let mut created = set.created.ok_or(Error::UnexpectedResponse)?;
+            let tag = tags[create_id].to_owned();
+            let mailbox = created
+                .remove(&Id(invocation_id))
+                .ok_or(Error::UnexpectedResponse)?;
+            mailboxes
+                .mailboxes_by_id
+                .insert(mailbox.id.clone(), Mailbox::new(mailbox.id, tag));
+        }
+
+        Ok(())
     }
 
     pub fn read_email_blob(&self, id: &Id) -> Result<impl Read + Send> {
@@ -696,7 +825,7 @@ impl Remote {
                 // Mailboxes.
                 let mut must_archive = true;
                 for mailbox in mailboxes.mailboxes_by_id.values() {
-                    let contains = tags.contains(&mailbox.name);
+                    let contains = tags.contains(&mailbox.tag);
                     if contains {
                         must_archive = false;
                     }
@@ -780,6 +909,9 @@ pub struct Mailboxes {
     pub archive_id: Id,
     /// A map of IDs to their corresponding mailboxes.
     pub mailboxes_by_id: HashMap<Id, Mailbox>,
+    /// A map of tags to their corresponding mailboxes.
+    pub ids_by_tag: HashMap<String, Id>,
+
     /// An enumeration of what mailbox roles this JMAP server supports.
     pub roles: AvailableMailboxRoles,
 }
@@ -806,8 +938,15 @@ pub struct Email {
 #[derive(Debug)]
 pub struct Mailbox {
     pub id: Id,
-    pub name: String,
+    pub tag: String,
     pub patch_key: String,
+}
+
+impl Mailbox {
+    fn new(id: Id, tag: String) -> Self {
+        let patch_key = format!("mailboxIds/{}", id);
+        Mailbox { id, tag, patch_key }
+    }
 }
 
 impl Email {
@@ -896,6 +1035,20 @@ fn expect_mailbox_get(
     }
     match invocation.call {
         jmap::MethodResponse::MailboxGet(get) => Ok(get),
+        jmap::MethodResponse::Error(error) => Err(Error::MethodError { error }),
+        _ => Err(Error::UnexpectedResponse),
+    }
+}
+
+fn expect_mailbox_set(
+    id: &str,
+    invocation: jmap::ResponseInvocation,
+) -> Result<jmap::MethodResponseSet<jmap::Mailbox>> {
+    if invocation.id != id {
+        return Err(Error::UnexpectedResponse);
+    }
+    match invocation.call {
+        jmap::MethodResponse::MailboxSet(set) => Ok(set),
         jmap::MethodResponse::Error(error) => Err(Error::MethodError { error }),
         _ => Err(Error::UnexpectedResponse),
     }

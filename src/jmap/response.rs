@@ -74,6 +74,10 @@ impl<'de> Deserialize<'de> for ResponseInvocation {
                         seq.next_element::<MethodResponseGet<Mailbox>>()?
                             .ok_or(length_err)?,
                     )),
+                    "Mailbox/set" => Ok(MethodResponse::MailboxSet(
+                        seq.next_element::<MethodResponseSet<Mailbox>>()?
+                            .ok_or(length_err)?,
+                    )),
                     "error" => Ok(MethodResponse::Error(
                         seq.next_element::<MethodResponseError>()?
                             .ok_or(length_err)?,
@@ -86,6 +90,7 @@ impl<'de> Deserialize<'de> for ResponseInvocation {
                             "Email/changes",
                             "Email/set",
                             "Mailbox/get",
+                            "Mailbox/set",
                             "error",
                         ],
                     )),
@@ -284,9 +289,9 @@ pub enum EmailKeyword {
 pub struct Mailbox {
     /// The id of the Mailbox.
     pub id: Id,
-    /// The Mailbox id for the parent of this Mailbox, or null if this Mailbox is at the top level.
-    /// Mailboxes form acyclic graphs (forests) directed by the child-to-parent relationship. There
-    /// MUST NOT be a loop.
+    /// The Mailbox id for the parent of this `Mailbox`, or `None` if this `Mailbox` is at the top
+    /// level. Mailboxes form acyclic graphs (forests) directed by the child-to-parent relationship.
+    /// There MUST NOT be a loop.
     pub parent_id: Option<Id>,
     /// User-visible name for the Mailbox, e.g., “Inbox”. This MUST be a Net-Unicode string
     /// \[[RFC5198](https://datatracker.ietf.org/doc/html/rfc5198)\] of at least 1 character in
@@ -335,6 +340,7 @@ pub enum MethodResponse {
     EmailSet(MethodResponseSet<EmptySetUpdated>),
 
     MailboxGet(MethodResponseGet<Mailbox>),
+    MailboxSet(MethodResponseSet<Mailbox>),
 
     Error(MethodResponseError),
 }

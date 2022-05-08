@@ -82,6 +82,10 @@ pub struct Config {
     #[serde(default = "default_retries")]
     pub retries: usize,
 
+    /// Whether to create new mailboxes automatically on the server from notmuch tags.
+    #[serde(default = "default_auto_create_new_mailboxes")]
+    pub auto_create_new_mailboxes: bool,
+
     /// Customize the names and synchronization behaviors of notmuch tags with JMAP keywords and
     /// mailboxes.
     #[serde(default = "Default::default")]
@@ -246,6 +250,10 @@ fn default_timeout() -> u64 {
 
 fn default_retries() -> usize {
     5
+}
+
+fn default_auto_create_new_mailboxes() -> bool {
+    true
 }
 
 impl Config {

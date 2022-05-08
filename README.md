@@ -75,14 +75,6 @@ the slightly out-of-date and not completely-accurately-implemented-as-written
 goes into more detail.
 
 ## Quirks to be aware of
--   mujmap will silently fail to apply any tags that do not correspond to a
-    keyword or a mailbox on the server. Likewise, if a message is changed on the
-    remote and synchronized with a notmuch message with tags that don't
-    correspond with anything on the remote, they will be removed.
-
-    In other words, please manually make mailboxes for your tags until automatic
-    mailbox creation is implemented.
-
 -   If you change any of the "tag" options in the config file *after* you
     already have a working setup, be sure to heed the warning in the example
     config file and follow the instructions!
@@ -99,15 +91,14 @@ mujmap cannot and will never be able to:
 
 ## Wishlist
 Features that mujmap does not currently support, but are eventually planned,
-include:
+include (in order of priority):
 
--   Automatically create new mailboxes on the server
--   Send email via a sendmail-compatibile interface
 -   Act as a daemon and download new mail in real-time using [JMAP push
     notifications](https://datatracker.ietf.org/doc/html/rfc8620#section-7) (!)
+-   Synchronize sieve mail filters with the upcoming [JMAP for Sieve
+    Scripts](https://datatracker.ietf.org/doc/draft-ietf-jmap-sieve/) standard
+-   Send email via a sendmail-compatibile interface
 -   Other authentication methods besides [basic
     HTTP](https://en.wikipedia.org/wiki/Basic_access_authentication)
 -   Support multiple account IDs on the same JMAP server (not sure where to find
     this in practice)
--   Synchronize sieve mail filters with the upcoming [JMAP for Sieve
-    Scripts](https://datatracker.ietf.org/doc/draft-ietf-jmap-sieve/) standard

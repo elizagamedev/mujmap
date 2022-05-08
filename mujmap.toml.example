@@ -43,6 +43,11 @@ fqdn = "fastmail.com"
 
 # retries = 5
 
+## Whether to create new mailboxes automatically on the server from notmuch
+## tags.
+
+# auto_create_new_mailboxes = true
+
 
 ################################################################################
 ## Tag config
@@ -50,6 +55,21 @@ fqdn = "fastmail.com"
 ## Customize the names and synchronization behaviors of notmuch tags with JMAP
 ## keywords and mailboxes. You can most likely leave these alone if you prefer
 ## the notmuch defaults, unless you would like to specifically ignore a tag.
+##
+## mujmap exposes as much configurability as reasonable here. However, there are
+## limitations with the non-configurable special tags built-in to notmuch. These
+## include:
+##
+## - draft
+## - flagged
+## - passed
+## - replied
+## - unread
+##
+## These are still synchronized with the appropriate mailboxes and keywords, but
+## cannot be configured like the rest of the options here.
+##
+## https://notmuchmail.org/special-tags/
 ##
 ## BEWARE of changing any of these settings *after* you already have a nice and
 ## happy notmuch instance up and running! If you want to make changes here, your
