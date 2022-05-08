@@ -267,6 +267,10 @@ pub struct Email {
     pub mailbox_ids: HashMap<Id, bool>,
 }
 
+/// Keywords that assign meaning to email.
+///
+/// Note that JMAP mandates that these be lowercase.
+///
 /// See <https://www.iana.org/assignments/imap-jmap-keywords/imap-jmap-keywords.xhtml>.
 #[derive(Clone, Copy, Eq, PartialEq, Hash, Debug, Deserialize)]
 pub enum EmailKeyword {
@@ -278,15 +282,15 @@ pub enum EmailKeyword {
     Flagged,
     #[serde(rename = "$answered")]
     Answered,
-    #[serde(rename = "$Forwarded")]
+    #[serde(rename = "$forwarded")]
     Forwarded,
-    #[serde(rename = "$Junk")]
+    #[serde(rename = "$junk")]
     Junk,
-    #[serde(rename = "$NotJunk")]
+    #[serde(rename = "$notjunk")]
     NotJunk,
-    #[serde(rename = "$Phishing")]
+    #[serde(rename = "$phishing")]
     Phishing,
-    #[serde(rename = "$Important")]
+    #[serde(rename = "$important")]
     Important,
     #[serde(other)]
     Unknown,

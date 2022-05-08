@@ -814,15 +814,15 @@ impl Remote {
                 patch.insert("keywords/$seen", as_value(!tags.contains("unread")));
                 patch.insert("keywords/$flagged", as_value(tags.contains("flagged")));
                 patch.insert("keywords/$answered", as_value(tags.contains("replied")));
-                patch.insert("keywords/$Forwarded", as_value(tags.contains("passed")));
+                patch.insert("keywords/$forwarded", as_value(tags.contains("passed")));
                 if !mailboxes.roles.spam && !tags_config.spam.is_empty() {
                     let spam = tags.contains(&tags_config.spam);
-                    patch.insert("keywords/$Junk", as_value(spam));
-                    patch.insert("keywords/$NotJunk", as_value(!spam));
+                    patch.insert("keywords/$junk", as_value(spam));
+                    patch.insert("keywords/$notjunk", as_value(!spam));
                 }
                 if !tags_config.phishing.is_empty() {
                     patch.insert(
-                        "keywords/$Phishing",
+                        "keywords/$phishing",
                         as_value(tags.contains(&tags_config.phishing)),
                     );
                 }

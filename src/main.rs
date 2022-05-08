@@ -239,44 +239,6 @@ fn try_main(stdout: &mut StandardStream) -> Result<(), Error> {
         .context(IndexMailboxesSnafu {})?;
     debug!("Got mailboxes: {:?}", mailboxes);
 
-    // Ensure that for every tag, there exists a corresponding mailbox.
-    let tags_with_missing_mailboxes: Vec<String> = local
-        .all_tags()
-        .context(IndexTagsSnafu {})?
-        .filter(|tag| {
-            let tag = tag.as_str();
-            // Any tags which *can* be mapped to a keyword do not require a mailbox.
-            if [
-                "draft",
-                "flagged",
-                "passed",
-                "replied",
-                "unread",
-                &config.tags.spam,
-                &config.tags.important,
-                &config.tags.phishing,
-            ]
-            .contains(&tag)
-            {
-                false
-            } else {
-                !mailboxes.ids_by_tag.contains_key(tag)
-            }
-        })
-        .collect();
-    if !tags_with_missing_mailboxes.is_empty() {
-        if !config.auto_create_new_mailboxes {
-            return Err(Error::MissingMailboxes {
-                tags: tags_with_missing_mailboxes,
-            });
-        }
-        remote
-            .create_mailboxes(&mut mailboxes, &tags_with_missing_mailboxes, &config.tags)
-            .context(CreateMailboxesSnafu {
-                tags: tags_with_missing_mailboxes,
-            })?;
-    }
-
     // Query local database for all email.
     let local_emails = local.all_emails().context(IndexLocalEmailsSnafu {})?;
 
@@ -549,8 +511,46 @@ fn try_main(stdout: &mut StandardStream) -> Result<(), Error> {
         }
     }
 
-    // Update remote messages.
+    // Ensure that for every tag, there exists a corresponding mailbox.
     if !args.dry_run {
+        let tags_with_missing_mailboxes: Vec<String> = local
+            .all_tags()
+            .context(IndexTagsSnafu {})?
+            .filter(|tag| {
+                let tag = tag.as_str();
+                // Any tags which *can* be mapped to a keyword do not require a mailbox.
+                if [
+                    "draft",
+                    "flagged",
+                    "passed",
+                    "replied",
+                    "unread",
+                    &config.tags.spam,
+                    &config.tags.important,
+                    &config.tags.phishing,
+                ]
+                .contains(&tag)
+                {
+                    false
+                } else {
+                    !mailboxes.ids_by_tag.contains_key(tag)
+                }
+            })
+            .collect();
+        if !tags_with_missing_mailboxes.is_empty() {
+            if !config.auto_create_new_mailboxes {
+                return Err(Error::MissingMailboxes {
+                    tags: tags_with_missing_mailboxes,
+                });
+            }
+            remote
+                .create_mailboxes(&mut mailboxes, &tags_with_missing_mailboxes, &config.tags)
+                .context(CreateMailboxesSnafu {
+                    tags: tags_with_missing_mailboxes,
+                })?;
+        }
+
+        // Update remote messages.
         stdout.set_color(&info_color_spec).context(LogSnafu {})?;
         write!(stdout, "Applying changes to JMAP server...").context(LogSnafu {})?;
         stdout.reset().context(LogSnafu {})?;
