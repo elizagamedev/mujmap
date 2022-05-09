@@ -2,7 +2,7 @@ use crate::config;
 use crate::jmap;
 use crate::jmap::EmailKeyword;
 use crate::remote;
-use crate::NewEmail;
+use crate::sync::NewEmail;
 use const_format::formatcp;
 use lazy_static::lazy_static;
 use log::debug;

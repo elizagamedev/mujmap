@@ -1,5 +1,5 @@
 use crate::jmap;
-use crate::NewEmail;
+use crate::sync::NewEmail;
 use directories::ProjectDirs;
 use snafu::prelude::*;
 use snafu::Snafu;
