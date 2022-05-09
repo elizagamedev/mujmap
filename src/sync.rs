@@ -4,6 +4,7 @@ use crate::remote::{self, Remote};
 use crate::{config::Config, local::Local};
 use crate::{jmap, local};
 use atty::Stream;
+use fslock::LockFile;
 use indicatif::ProgressBar;
 use log::{debug, error, warn};
 use rayon::{prelude::*, ThreadPoolBuildError};
@@ -19,6 +20,12 @@ use termcolor::{ColorSpec, StandardStream, WriteColor};
 
 #[derive(Debug, Snafu)]
 pub enum Error {
+    #[snafu(display("Could not open lock file `{}': {}", path.to_string_lossy(), source))]
+    OpenLockFile { path: PathBuf, source: io::Error },
+
+    #[snafu(display("Could not lock: {}", source))]
+    Lock { source: io::Error },
+
     #[snafu(display("Could not log string: {}", source))]
     Log { source: io::Error },
 
@@ -186,6 +193,17 @@ pub fn sync(
     args: Args,
     config: Config,
 ) -> Result<(), Error> {
+    // Grab lock.
+    let lock_file_path = mail_dir.join("mujmap.lock");
+    let mut lock = LockFile::open(&lock_file_path).context(OpenLockFileSnafu {
+        path: lock_file_path,
+    })?;
+    let is_locked = lock.try_lock().context(LockSnafu {})?;
+    if !is_locked {
+        println!("Lock file owned by another process. Waiting...");
+        lock.lock().context(LockSnafu {})?;
+    }
+
     // Load the intermediary state.
     let latest_state_filename = mail_dir.join("mujmap.state.json");
     let latest_state = LatestState::open(&latest_state_filename).unwrap_or_else(|e| {
