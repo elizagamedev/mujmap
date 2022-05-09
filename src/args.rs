@@ -11,7 +11,7 @@ There is NO WARRANTY, to the extent permitted by law.";
 const VERSION: &str = formatcp!("{}\n{}", clap::crate_version!(), LICENSE);
 
 #[derive(Parser, Debug)]
-#[clap(author, version = VERSION, about, long_about = None)]
+#[clap(author, version, long_version = VERSION, about, long_about = None)]
 pub struct Args {
     /// Path to config file.
     ///
