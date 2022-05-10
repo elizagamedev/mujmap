@@ -42,6 +42,16 @@ directory *must* be a subdirectory of the notmuch root directory. Then, invoke
 mujmap from that directory, or from another directory pointing to it with the
 `-C` option. Check `mujmap --help` for more options.
 
+## Quirks
+-   If you change any of the "tag" options in the config file *after* you
+    already have a working setup, be sure to heed the warning in the example
+    config file and follow the instructions!
+-   No matter how old the change, any messages changed in the local database
+    in-between syncs will overwrite remote changes. This is due to an API
+    limitation, described in more detail in the [Behavior](#behavior) section.
+-   This software probably doesn't work on Windows. I have no evidence of this
+    being the case, it's just a hunch. Please prove me wrong.
+
 ## Behavior
 TL;DR: mujmap downloads new mail files, merges changes locally, preferring local
 changes in the event of a conflict, and then pushes changes to the remote.
@@ -87,31 +97,9 @@ the slightly out-of-date and not completely-accurately-implemented-as-written
 [DESIGN.org](https://github.com/elizagamedev/mujmap/blob/main/DESIGN.org) file
 goes into more detail.
 
-## Quirks to be aware of
--   If you change any of the "tag" options in the config file *after* you
-    already have a working setup, be sure to heed the warning in the example
-    config file and follow the instructions!
-
--   This software probably doesn't work on Windows. I have no evidence of this
-    being the case, it's just a hunch. Please prove me wrong.
-
 ## Limitations
 mujmap cannot and will never be able to:
 
 -   Upload new messages
 -   Modify message contents
 -   Delete messages (other than tagging them as `deleted` or `spam`)
-
-## Wishlist
-Features that mujmap does not currently support, but are eventually planned,
-include:
-
--   Send email via a sendmail-compatibile interface
--   Act as a daemon and download new mail in real-time using [JMAP push
-    notifications](https://datatracker.ietf.org/doc/html/rfc8620#section-7) (!)
--   Synchronize sieve mail filters with the upcoming [JMAP for Sieve
-    Scripts](https://datatracker.ietf.org/doc/draft-ietf-jmap-sieve/) standard
--   Other authentication methods besides [basic
-    HTTP](https://en.wikipedia.org/wiki/Basic_access_authentication)
--   Support multiple account IDs on the same JMAP server (not sure where to find
-    this in practice)
