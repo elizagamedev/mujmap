@@ -16,6 +16,19 @@ guarantee it won't completely explode your inbox and destroy all your most
 treasured kitten photos. Please use with caution for the time being.
 Contributions very welcome!
 
+## Installation
+
+Install with [cargo](https://doc.rust-lang.org/cargo/):
+
+```shell
+cargo install --git https://github.com/elizagamedev/mujmap.git
+```
+
+Availablility on [crates.io](https://crates.io) is pending a new minor release
+of [notmuch-rs](https://github.com/vhdirk/notmuch-rs). After that, plans also
+include an official [Nix package](https://nixos.org/) and
+[home-manager](https://github.com/nix-community/home-manager) module.
+
 ## Usage
 mujmap can be the sole mail agent in your notmuch database or live alongside
 others, it can manage two or more independent JMAP accounts in the same
@@ -91,13 +104,13 @@ mujmap cannot and will never be able to:
 
 ## Wishlist
 Features that mujmap does not currently support, but are eventually planned,
-include (in order of priority):
+include:
 
+-   Send email via a sendmail-compatibile interface
 -   Act as a daemon and download new mail in real-time using [JMAP push
     notifications](https://datatracker.ietf.org/doc/html/rfc8620#section-7) (!)
 -   Synchronize sieve mail filters with the upcoming [JMAP for Sieve
     Scripts](https://datatracker.ietf.org/doc/draft-ietf-jmap-sieve/) standard
--   Send email via a sendmail-compatibile interface
 -   Other authentication methods besides [basic
     HTTP](https://en.wikipedia.org/wiki/Basic_access_authentication)
 -   Support multiple account IDs on the same JMAP server (not sure where to find

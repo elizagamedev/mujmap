@@ -6,7 +6,8 @@ version = "0.1.0"
 license = "GPL-3.0"
 keywords = ["notmuch", "mail", "email", "jmap"]
 categories = ["command-line-utillities", "email"]
-repository = "https://github.com/elizagamedev/muchmore/"
+repository = "https://github.com/elizagamedev/mujmap/"
+homepage = "https://github.com/elizagamedev/mujmap/"
 edition = "2021"
 
 # See more keys and their definitions at https://doc.rust-lang.org/cargo/reference/manifest.html
