@@ -549,12 +549,14 @@ pub fn sync(
             .context(PushChangesSnafu {})?;
     }
 
-    // Record the final state for the next invocation.
-    LatestState {
-        notmuch_revision: Some(local.revision() + 1),
-        jmap_state: Some(state),
+    if !args.dry_run {
+        // Record the final state for the next invocation.
+        LatestState {
+            notmuch_revision: Some(local.revision() + 1),
+            jmap_state: Some(state),
+        }
+        .save(latest_state_filename)?;
     }
-    .save(latest_state_filename)?;
 
     Ok(())
 }

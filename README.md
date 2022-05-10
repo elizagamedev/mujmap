@@ -55,31 +55,27 @@ mujmap from that directory, or from another directory pointing to it with the
 ## Migrating from IMAP+notmuch
 
 Unfortunately, there is no straightforward way to migrate yet. The following is
-one method you can use, **ONLY after you make a backup of your notmuch
-database**:
+a method you can use, **ONLY after you make a backup of your notmuch database**:
 
-1. Ensure you're fully synchronized with the IMAP server.
-2. Create a new notmuch database by setting the environment variable
-   `NOTMUCH_CONFIG` to a different path from your IMAP-managed database. This
-   will be our "intermediate" database.
-3. Configure mujmap in this intermediate database and perform a `mujmap sync`
-   here. Now your new database will contain a copy of all the messages on the
-   server with the correct filenames necessary for mujmap to function.
-4. Copy your newly-populated mujmap maildir to be under your *IMAP* database's
-   path. Make sure that `NOTMUCH_CONFIG` points to the original database again.
-   Run `notmuch new --no-hooks` to add these new messages to your IMAP database.
-   They should all be duplicates of your IMAP messages, so they will inherit all
-   of your tags.
-5. Remove your IMAP maildir, leaving only the JMAP/mujmap maildir. If you run
-   `notmuch new --no-hooks` again, it should tell you messages were renamed, but
-   not removed. If not, *stop* and restore your backup, because something might
-   have gone wrong. Now your IMAP database with your carefully curated tags are
-   pointing to files with mujmap-compatible filenames.
-6. Edit the `mujmap.state.json` file and change the `"notmuch_revision"` value
-   to `0`. This will tell mujmap that *all* local mail tags since revision `0`
-   (i.e. everything) should override the server mail properties. You can leave
-   the `"jmap_state"` property alone.
-7. Run `mujmap sync` again and cross your fingers!
+1.  Ensure you're fully synchronized with the IMAP server.
+2.  Add a maildir for mujmap as a sibling of your already-existing maildirs.
+    Configure it as you please, but don't invoke `mujmap sync` yet.
+3.  Create a file called `mujmap.state.json` in this directory alongside
+    `mujmap.toml` with the following contents:
+
+```json
+{"notmuch_revision":0}
+```
+4.  Run `mujmap --dry-run sync` here. This will not actually make any changes to
+    your maildir, but will allow you to verify your config and download email
+    into a cache.
+5.  Run `mujmap sync` here to sync your mail for real. This will the downloaded
+    email to the mujmap maildir and add them to your notmuch database. Because
+    these messages should be duplicates of your existing messages, they will
+    inherit the duplicates' tags, and then push them back to the server.
+5.  Remove your old IMAP maildirs and run `notmuch new --no-hooks`. If
+    everything went smoothly, notmuch shouldn't mention any files being removed
+    in its output.
 
 ## Behavior
 TL;DR: mujmap downloads new mail files, merges changes locally, preferring local
