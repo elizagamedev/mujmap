@@ -52,6 +52,35 @@ mujmap from that directory, or from another directory pointing to it with the
 -   This software probably doesn't work on Windows. I have no evidence of this
     being the case, it's just a hunch. Please prove me wrong.
 
+## Migrating from IMAP+notmuch
+
+Unfortunately, there is no straightforward way to migrate yet. The following is
+one method you can use, **ONLY after you make a backup of your notmuch
+database**:
+
+1. Ensure you're fully synchronized with the IMAP server.
+2. Create a new notmuch database by setting the environment variable
+   `NOTMUCH_CONFIG` to a different path from your IMAP-managed database. This
+   will be our "intermediate" database.
+3. Configure mujmap in this intermediate database and perform a `mujmap sync`
+   here. Now your new database will contain a copy of all the messages on the
+   server with the correct filenames necessary for mujmap to function.
+4. Copy your newly-populated mujmap maildir to be under your *IMAP* database's
+   path. Make sure that `NOTMUCH_CONFIG` points to the original database again.
+   Run `notmuch new --no-hooks` to add these new messages to your IMAP database.
+   They should all be duplicates of your IMAP messages, so they will inherit all
+   of your tags.
+5. Remove your IMAP maildir, leaving only the JMAP/mujmap maildir. If you run
+   `notmuch new --no-hooks` again, it should tell you messages were renamed, but
+   not removed. If not, *stop* and restore your backup, because something might
+   have gone wrong. Now your IMAP database with your carefully curated tags are
+   pointing to files with mujmap-compatible filenames.
+6. Edit the `mujmap.state.json` file and change the `"notmuch_revision"` value
+   to `0`. This will tell mujmap that *all* local mail tags since revision `0`
+   (i.e. everything) should override the server mail properties. You can leave
+   the `"jmap_state"` property alone.
+7. Run `mujmap sync` again and cross your fingers!
+
 ## Behavior
 TL;DR: mujmap downloads new mail files, merges changes locally, preferring local
 changes in the event of a conflict, and then pushes changes to the remote.
