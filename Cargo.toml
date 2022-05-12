@@ -27,7 +27,7 @@ indicatif = "0.16.2"
 itertools = "0.10.3"
 lazy_static = "1.4.0"
 log = "0.4.16"
-notmuch = { git = "https://github.com/vhdirk/notmuch-rs" }
+notmuch = "0.7.2"
 path-absolutize = "3.0.13"
 rayon = "1.5.2"
 regex = "1.5.5"

@@ -765,8 +765,9 @@ dependencies = [
 
 [[package]]
 name = "notmuch"
-version = "0.7.1"
-source = "git+https://github.com/vhdirk/notmuch-rs#22cdcd63e02165e8521b4c47aaeae4e09f7c43fd"
+version = "0.7.2"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "8d7ab27cedb5b7464ad261d55ddf6da7f770f56364cec589b3a8d9a1d7d2bf85"
 dependencies = [
  "from_variants",
  "libc",

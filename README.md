@@ -21,12 +21,10 @@ Contributions very welcome!
 Install with [cargo](https://doc.rust-lang.org/cargo/):
 
 ```shell
-cargo install --git https://github.com/elizagamedev/mujmap.git
+cargo install mujmap
 ```
 
-Availablility on [crates.io](https://crates.io) is pending a new minor release
-of [notmuch-rs](https://github.com/vhdirk/notmuch-rs). After that, plans also
-include an official [Nix package](https://nixos.org/) and
+Plans also include an official [Nix package](https://nixos.org/) and
 [home-manager](https://github.com/nix-community/home-manager) module.
 
 ## Usage
