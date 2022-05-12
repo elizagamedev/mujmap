@@ -3,7 +3,7 @@ use snafu::prelude::*;
 use std::{
     fs, io,
     path::{Path, PathBuf},
-    process::Command,
+    process::{Command, ExitStatus},
     string::FromUtf8Error,
 };
 
@@ -34,6 +34,9 @@ pub enum Error {
 
     #[snafu(display("Could not execute password command `{}': {}", command, source))]
     ExecutePasswordCommand { command: String, source: io::Error },
+
+    #[snafu(display("Password command `{}' exited with `{}'", command, status))]
+    PasswordCommandStatus { command: String, status: ExitStatus },
 
     #[snafu(display(
         "Could not decode password command `{}' output as utf-8: {}",
@@ -289,6 +292,13 @@ impl Config {
             .context(ExecutePasswordCommandSnafu {
                 command: &self.password_command,
             })?;
+        ensure!(
+            output.status.success(),
+            PasswordCommandStatusSnafu {
+                command: &self.password_command,
+                status: output.status,
+            }
+        );
         let stdout = String::from_utf8(output.stdout).context(DecodePasswordCommandSnafu {
             command: &self.password_command,
         })?;
