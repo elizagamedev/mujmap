@@ -29,25 +29,25 @@ pub enum Error {
     #[snafu(display("Could not log string: {}", source))]
     Log { source: io::Error },
 
-    #[snafu(display("Could not read mujmore state file `{}': {}", filename.to_string_lossy(), source))]
+    #[snafu(display("Could not read mujmap state file `{}': {}", filename.to_string_lossy(), source))]
     ReadStateFile {
         filename: PathBuf,
         source: io::Error,
     },
 
-    #[snafu(display("Could not parse mujmore state file `{}': {}", filename.to_string_lossy(), source))]
+    #[snafu(display("Could not parse mujmap state file `{}': {}", filename.to_string_lossy(), source))]
     ParseStateFile {
         filename: PathBuf,
         source: serde_json::Error,
     },
 
-    #[snafu(display("Could not create mujmore state file `{}': {}", filename.to_string_lossy(), source))]
+    #[snafu(display("Could not create mujmap state file `{}': {}", filename.to_string_lossy(), source))]
     CreateStateFile {
         filename: PathBuf,
         source: io::Error,
     },
 
-    #[snafu(display("Could not write to mujmore state file `{}': {}", filename.to_string_lossy(), source))]
+    #[snafu(display("Could not write to mujmap state file `{}': {}", filename.to_string_lossy(), source))]
     WriteStateFile {
         filename: PathBuf,
         source: serde_json::Error,
