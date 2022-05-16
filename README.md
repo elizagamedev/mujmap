@@ -16,12 +16,26 @@ guarantee it won't completely explode your inbox and destroy all your most
 treasured kitten photos. Please use with caution for the time being.
 Contributions very welcome!
 
+**If you do decide to use mujmap**, please look at the list of open issues
+first. If you are installing the latest Cargo release instead of the latest git
+revision, **also consider** looking at the issues which have since been closed
+since the latest Cargo release.
+
 ## Installation
+
+Please first read the [Disclaimer](#disclaimer) section.
 
 Install with [cargo](https://doc.rust-lang.org/cargo/):
 
 ```shell
 cargo install mujmap
+```
+
+You may instead want to install from the latest `main` revision as bugs are
+regularly being fixed:
+
+```shell
+cargo install --git https://github.com/elizagamedev/mujmap
 ```
 
 Plans also include an official [Nix package](https://nixos.org/) and
@@ -53,7 +67,8 @@ mujmap from that directory, or from another directory pointing to it with the
 ## Migrating from IMAP+notmuch
 
 Unfortunately, there is no straightforward way to migrate yet. The following is
-a method you can use, **ONLY after you make a backup of your notmuch database**:
+an (untested) method you can use, **ONLY after you make a backup of your notmuch
+database**:
 
 1.  Ensure you're fully synchronized with the IMAP server.
 2.  Add a maildir for mujmap as a sibling of your already-existing maildirs.
