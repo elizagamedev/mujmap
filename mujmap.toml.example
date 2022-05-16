@@ -39,7 +39,7 @@ fqdn = "fastmail.com"
 
 # timeout = 5
 
-## Number of retries to establish an HTTP request. 0 means infinite.
+## Number of retries to download an email file. 0 means infinite.
 
 # retries = 5
 

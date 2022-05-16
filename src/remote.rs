@@ -10,7 +10,7 @@ use crate::{
     local,
 };
 use itertools::Itertools;
-use log::{debug, log_enabled, trace, warn};
+use log::{debug, log_enabled, trace};
 use serde::{de::DeserializeOwned, Serialize};
 use serde_json::Value;
 use snafu::prelude::*;
@@ -86,12 +86,10 @@ struct HttpWrapper {
     authorization: String,
     /// Persistent ureq agent to use for all HTTP requests.
     agent: ureq::Agent,
-    /// Number of times to retry a request.
-    retries: usize,
 }
 
 impl HttpWrapper {
-    fn new(username: &str, password: &str, timeout: u64, retries: usize) -> Self {
+    fn new(username: &str, password: &str, timeout: u64) -> Self {
         let safe_username = match username.find(':') {
             Some(idx) => &username[..idx],
             None => username,
@@ -108,7 +106,6 @@ impl HttpWrapper {
         Self {
             agent,
             authorization,
-            retries,
         }
     }
 
@@ -125,37 +122,16 @@ impl HttpWrapper {
     }
 
     fn get_reader(&self, url: &str) -> Result<impl Read + Send> {
-        let mut retry_count = 0;
-        loop {
-            match self
-                .agent
-                .get(url)
-                .set("Authorization", &self.authorization)
-                .call()
-            {
-                Ok(call) => {
-                    return Ok(call
-                        .into_reader()
-                        // Limiting download size as advised by ureq's documentation:
-                        // https://docs.rs/ureq/latest/ureq/struct.Response.html#method.into_reader
-                        .take(10_000_000));
-                }
-                Err(e) => match e {
-                    ureq::Error::Transport(_) => {
-                        // Try again.
-                        retry_count += 1;
-                        if retry_count >= self.retries {
-                            return Err(e).context(ReadEmailBlobSnafu {});
-                        }
-                        warn!(
-                            "Transport error in GET on try {}, retrying: {}",
-                            retry_count, e
-                        );
-                    }
-                    _ => return Err(e).context(ReadEmailBlobSnafu {}),
-                },
-            };
-        }
+        Ok(self
+            .agent
+            .get(url)
+            .set("Authorization", &self.authorization)
+            .call()
+            .context(ReadEmailBlobSnafu {})?
+            .into_reader()
+            // Limiting download size as advised by ureq's documentation:
+            // https://docs.rs/ureq/latest/ureq/struct.Response.html#method.into_reader
+            .take(10_000_000))
     }
 
     fn post<S: Serialize, D: DeserializeOwned>(&self, url: &str, body: S) -> Result<D> {
@@ -187,30 +163,19 @@ impl Remote {
     pub fn open(config: &Config) -> Result<Self> {
         let password = config.password().context(GetPasswordSnafu {})?;
         match &config.fqdn {
-            Some(fqdn) => Self::open_host(
-                &fqdn,
-                config.username.as_str(),
-                &password,
-                config.timeout,
-                config.retries,
-            ),
+            Some(fqdn) => {
+                Self::open_host(&fqdn, config.username.as_str(), &password, config.timeout)
+            }
             None => Remote::open_url(
                 &config.session_url.as_ref().unwrap(),
                 config.username.as_str(),
                 &password,
                 config.timeout,
-                config.retries,
             ),
         }
     }
 
-    pub fn open_host(
-        fqdn: &str,
-        username: &str,
-        password: &str,
-        timeout: u64,
-        retries: usize,
-    ) -> Result<Self> {
+    pub fn open_host(fqdn: &str, username: &str, password: &str, timeout: u64) -> Result<Self> {
         let resolver = Resolver::from_system_conf().context(ParseResolvConfSnafu {})?;
         let mut address = format!("_jmap._tcp.{}", fqdn);
         if !address.ends_with(".") {
@@ -220,7 +185,7 @@ impl Remote {
             .srv_lookup(address.as_str())
             .context(SrvLookupSnafu { address })?;
 
-        let http_wrapper = HttpWrapper::new(username, password, timeout, retries);
+        let http_wrapper = HttpWrapper::new(username, password, timeout);
 
         // Try all SRV names in order of priority.
         let mut last_err = None;
@@ -256,9 +221,8 @@ impl Remote {
         username: &str,
         password: &str,
         timeout: u64,
-        retries: usize,
     ) -> Result<Self> {
-        let http_wrapper = HttpWrapper::new(username, password, timeout, retries);
+        let http_wrapper = HttpWrapper::new(username, password, timeout);
         let (session_url, session) = http_wrapper
             .get_session(session_url)
             .context(OpenSessionSnafu { session_url })?;

@@ -316,15 +316,23 @@ pub fn sync(
             new_emails_missing_from_cache
                 .into_par_iter()
                 .map(|new_email| {
-                    let remote_email = new_email.remote_email;
-                    let reader = remote
-                        .read_email_blob(&remote_email.blob_id)
-                        .context(DownloadRemoteEmailSnafu {})?;
-                    cache
-                        .download_into_cache(&new_email, reader)
-                        .context(CacheNewEmailSnafu {})?;
-                    pb.inc(1);
-                    Ok(())
+                    let mut retry_count = 0;
+                    loop {
+                        match download(new_email, &remote, &cache) {
+                            Ok(_) => {
+                                pb.inc(1);
+                                return Ok(());
+                            }
+                            Err(e) => {
+                                // Try again.
+                                retry_count += 1;
+                                if config.retries > 0 && retry_count >= config.retries {
+                                    return Err(e);
+                                }
+                                warn!("Download error on try {}, retrying: {}", retry_count, e);
+                            }
+                        };
+                    }
                 })
                 .collect()
         });
@@ -560,6 +568,18 @@ pub fn sync(
 
     Ok(())
 }
+
+fn download(new_email: &NewEmail, remote: &Remote, cache: &Cache) -> Result<()> {
+    let remote_email = new_email.remote_email;
+    let reader = remote
+        .read_email_blob(&remote_email.blob_id)
+        .context(DownloadRemoteEmailSnafu {})?;
+    cache
+        .download_into_cache(&new_email, reader)
+        .context(CacheNewEmailSnafu {})?;
+    Ok(())
+}
+
 fn get_notmuch_revision(
     has_no_local_emails: bool,
     local: &Local,

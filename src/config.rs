@@ -81,7 +81,7 @@ pub struct Config {
     #[serde(default = "default_timeout")]
     pub timeout: u64,
 
-    /// Number of retries to establish an HTTP request. 0 means infinite.
+    /// Number of retries to download an email file. 0 means infinite.
     #[serde(default = "default_retries")]
     pub retries: usize,
 
