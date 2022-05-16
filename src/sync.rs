@@ -514,6 +514,7 @@ pub fn sync(
             .filter(|tag| {
                 let tag = tag.as_str();
                 // Any tags which *can* be mapped to a keyword do not require a mailbox.
+                // Additionally, automatic tags are never mapped to mailboxes.
                 if [
                     "draft",
                     "flagged",
@@ -525,6 +526,7 @@ pub fn sync(
                     &config.tags.phishing,
                 ]
                 .contains(&tag)
+                    || local::AUTOMATIC_TAGS.contains(tag)
                 {
                     false
                 } else {

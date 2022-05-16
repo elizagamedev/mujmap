@@ -10,7 +10,7 @@ use crate::{
     local,
 };
 use itertools::Itertools;
-use log::{debug, log_enabled, trace};
+use log::{debug, log_enabled, trace, warn};
 use serde::{de::DeserializeOwned, Serialize};
 use serde_json::Value;
 use snafu::prelude::*;
@@ -595,6 +595,22 @@ impl Remote {
             .collect::<Result<Vec<_>>>()?
             .into_iter()
             .flatten()
+            .filter(|(_, mailbox)| {
+                // Filter out mailboxes with the same tag as automatic tags and warn the user that
+                // they shouldn't do this.
+                if local::AUTOMATIC_TAGS.contains(mailbox.tag.as_str()) {
+                    warn!(
+                        concat!(
+                            "The JMAP server contains a mailbox `{}' which has the same name",
+                            " as an automatic tag. This mailbox will be ignored."
+                        ),
+                        mailbox.tag
+                    );
+                    false
+                } else {
+                    true
+                }
+            })
             .collect();
         let ids_by_tag: HashMap<_, _> = mailboxes_by_id
             .iter()
@@ -764,7 +780,13 @@ impl Remote {
         let updates = local_emails
             .iter()
             .map(|(id, local_email)| {
-                let tags: HashSet<String> = local_email.message.tags().into_iter().collect();
+                // Filter out automatic tags.
+                let tags: HashSet<String> = local_email
+                    .message
+                    .tags()
+                    .into_iter()
+                    .filter(|tag| !local::AUTOMATIC_TAGS.contains(tag.as_str()))
+                    .collect();
                 let mut patch = HashMap::new();
                 fn as_value(b: bool) -> Value {
                     if b {

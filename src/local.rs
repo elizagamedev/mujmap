@@ -14,6 +14,7 @@ use regex::Regex;
 use snafu::prelude::*;
 use snafu::Snafu;
 use std::collections::HashMap;
+use std::collections::HashSet;
 use std::fs;
 use std::io;
 use std::path::Path;
@@ -21,6 +22,15 @@ use std::path::PathBuf;
 
 const ID_PATTERN: &'static str = r"[-A-Za-z0-9_]+";
 const MAIL_PATTERN: &'static str = formatcp!(r"^({})\.({})(?:$|:)", ID_PATTERN, ID_PATTERN);
+
+lazy_static! {
+    /// mujmap *must not* touch automatic tags, and should warn if the JMAP server contains
+    /// mailboxes that match these tags.
+    ///
+    /// These values taken from: https://notmuchmail.org/special-tags/
+    pub static ref AUTOMATIC_TAGS: HashSet<&'static str> =
+        HashSet::from(["attachment", "signed", "encrypted"]);
+}
 
 #[derive(Debug, Snafu)]
 pub enum Error {
@@ -250,7 +260,7 @@ impl Email {
                 Some(s)
             }
         }
-        let mut tags = Vec::new();
+        let mut tags = HashSet::new();
         for keyword in &remote_email.keywords {
             if let Some(tag) = match keyword {
                 EmailKeyword::Answered => Some("replied"),
@@ -279,7 +289,7 @@ impl Email {
                 EmailKeyword::Phishing => none_if_empty(&tags_config.phishing),
                 _ => None,
             } {
-                tags.push(tag);
+                tags.insert(tag);
             }
         }
         if !mailboxes.roles.spam
@@ -287,25 +297,38 @@ impl Email {
             && remote_email.keywords.contains(&EmailKeyword::Junk)
             && !remote_email.keywords.contains(&EmailKeyword::NotJunk)
         {
-            tags.push(&tags_config.spam);
+            tags.insert(&tags_config.spam);
         }
         if !remote_email.keywords.contains(&EmailKeyword::Seen) {
-            tags.push("unread");
+            tags.insert("unread");
         }
         // Mailboxes.
         for id in &remote_email.mailbox_ids {
             if let Some(mailbox) = mailboxes.mailboxes_by_id.get(id) {
-                tags.push(&mailbox.tag);
+                tags.insert(&mailbox.tag);
             }
         }
-        // Replace all tags!
+        // Build diffs for tags and apply them.
+        self.message.freeze()?;
+        let extant_tags: HashSet<String> = self.message.tags().into_iter().collect();
+        let tags_to_remove: Vec<&str> = extant_tags
+            .iter()
+            .map(|tag| tag.as_str())
+            .filter(|tag| !tags.contains(tag) && !AUTOMATIC_TAGS.contains(tag))
+            .collect();
+        let tags_to_add: Vec<&str> = tags
+            .iter()
+            .cloned()
+            .filter(|&tag| !extant_tags.contains(tag))
+            .collect();
         debug!(
-            "Updating local email: {:?}, {:?}, with tags: {tags:?}",
+            "Updating local email: {:?}, {:?}, by adding tags: {tags_to_add:?}, removing tags: {tags_to_remove:?}",
             self, remote_email
         );
-        self.message.freeze()?;
-        self.message.remove_all_tags()?;
-        for tag in tags {
+        for tag in tags_to_remove {
+            self.message.remove_tag(tag)?;
+        }
+        for tag in tags_to_add {
             self.message.add_tag(tag)?;
         }
         self.message.thaw()?;
