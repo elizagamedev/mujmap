@@ -442,6 +442,10 @@ pub fn sync(
                 .collect::<Result<HashMap<_, _>>>()?;
 
             // Update local emails with remote tags.
+            //
+            // XXX: If the server contains two or more of a message which notmuch considers a
+            // duplicate, it will be updated *for each duplicate* in a non-deterministic order. This
+            // may cause surprises.
             for remote_email in remote_emails.values() {
                 // Skip email which has been updated offline.
                 if updated_local_emails.contains_key(&remote_email.id) {

@@ -216,18 +216,16 @@ pub struct Email {
 }
 
 impl Email {
-    fn from_message(message: Message, mail_cur_dir: &Path) -> Option<Self> {
+    /// Returns a separate `Email` object for each duplicate email file mujmap owns.
+    fn from_message(message: Message, mail_cur_dir: &Path) -> Vec<Self> {
         lazy_static! {
             static ref MAIL_FILE: Regex = Regex::new(MAIL_PATTERN).unwrap();
         }
         message
             .filenames()
             .into_iter()
-            // Get the first filename in our mail dir. It's possible there are duplicate mail files
-            // in notmuch's database which we don't own.
             .filter(|x| x.starts_with(mail_cur_dir))
-            .next()
-            .and_then(|path| {
+            .flat_map(|path| {
                 MAIL_FILE
                     .captures(&path.file_name().unwrap().to_string_lossy())
                     .map(|x| {
@@ -240,9 +238,10 @@ impl Email {
             .map(|(id, blob_id, path)| Self {
                 id,
                 blob_id,
-                message,
+                message: message.clone(),
                 path,
             })
+            .collect()
     }
 
     pub fn update(
