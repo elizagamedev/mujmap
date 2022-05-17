@@ -32,21 +32,14 @@ pub enum Error {
     #[snafu(display("`directory_separator' must not be empty"))]
     EmptyDirectorySeparator {},
 
-    #[snafu(display("Could not execute password command `{}': {}", command, source))]
-    ExecutePasswordCommand { command: String, source: io::Error },
+    #[snafu(display("Could not execute password command: {}", source))]
+    ExecutePasswordCommand { source: io::Error },
 
-    #[snafu(display("Password command `{}' exited with `{}'", command, status))]
-    PasswordCommandStatus { command: String, status: ExitStatus },
+    #[snafu(display("Password command exited with `{}': {}", status, stderr))]
+    PasswordCommandStatus { status: ExitStatus, stderr: String },
 
-    #[snafu(display(
-        "Could not decode password command `{}' output as utf-8: {}",
-        command,
-        source
-    ))]
-    DecodePasswordCommand {
-        command: String,
-        source: FromUtf8Error,
-    },
+    #[snafu(display("Could not decode password command output as utf-8"))]
+    DecodePasswordCommand { source: FromUtf8Error },
 }
 
 pub type Result<T, E = Error> = std::result::Result<T, E>;
@@ -289,19 +282,16 @@ impl Config {
             .arg("-c")
             .arg(self.password_command.as_str())
             .output()
-            .context(ExecutePasswordCommandSnafu {
-                command: &self.password_command,
-            })?;
+            .context(ExecutePasswordCommandSnafu {})?;
         ensure!(
             output.status.success(),
             PasswordCommandStatusSnafu {
-                command: &self.password_command,
                 status: output.status,
+                stderr: String::from_utf8(output.stderr)
+                    .unwrap_or_else(|e| format!("<utf-8 decode error: {e}>")),
             }
         );
-        let stdout = String::from_utf8(output.stdout).context(DecodePasswordCommandSnafu {
-            command: &self.password_command,
-        })?;
+        let stdout = String::from_utf8(output.stdout).context(DecodePasswordCommandSnafu {})?;
         Ok(stdout)
     }
 }
