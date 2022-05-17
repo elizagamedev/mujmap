@@ -2,7 +2,7 @@
 name = "mujmap"
 description = "JMAP synchronization for notmuch mail"
 authors = ["Eliza Velasquez"]
-version = "0.1.0"
+version = "0.1.1"
 license = "GPL-3.0"
 keywords = ["notmuch", "mail", "email", "jmap"]
 categories = ["command-line-utilities", "email"]

@@ -61,6 +61,7 @@ mujmap from that directory, or from another directory pointing to it with the
 -   No matter how old the change, any messages changed in the local database
     in-between syncs will overwrite remote changes. This is due to an API
     limitation, described in more detail in the [Behavior](#behavior) section.
+-   Duplicate messages may behave strangely. See #13.
 -   This software probably doesn't work on Windows. I have no evidence of this
     being the case, it's just a hunch. Please prove me wrong.
 
