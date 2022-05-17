@@ -69,7 +69,9 @@ mujmap from that directory, or from another directory pointing to it with the
 
 Unfortunately, there is no straightforward way to migrate yet. The following is
 an (untested) method you can use, **ONLY after you make a backup of your notmuch
-database**:
+database**, and **ONLY after you have verified that mujmap works correctly for
+your account in an independent instance of a notmuch database (see the notmuch
+manpages for information on how to do this)**:
 
 1.  Ensure you're fully synchronized with the IMAP server.
 2.  Add a maildir for mujmap as a sibling of your already-existing maildirs.
@@ -142,3 +144,14 @@ mujmap cannot and will never be able to:
 -   Upload new messages
 -   Modify message contents
 -   Delete messages (other than tagging them as `deleted` or `spam`)
+
+## Troubleshooting
+
+### Status Code 401 (Unauthorized)
+- [ ] Ensure that your mail server supports HTTP Basic Auth. *Fastmail does.* See #5.
+- [ ] Verify that you are using the correct username and password. Fastmail
+      requires a special third-party password *specifically for JMAP access*.
+- [ ] Verify that you are using a `password_command` which prints the correct
+      password to stdout. If the password command fails, mujmap logs its stderr.
+- [ ] If using Fastmail, check your login logs on the website for additional
+      context.
