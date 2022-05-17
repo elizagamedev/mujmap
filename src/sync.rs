@@ -111,6 +111,13 @@ pub enum Error {
     RemoveLocalEmail { source: notmuch::Error },
 
     #[snafu(display(
+        "Could not remove unindexed mail file `{}': {}",
+        path.to_string_lossy(),
+        source
+    ))]
+    RemoveUnindexedMailFile { path: PathBuf, source: io::Error },
+
+    #[snafu(display(
         "Could not make symlink from cache `{}' to maildir `{}': {}",
         from.to_string_lossy(),
         to.to_string_lossy(),
@@ -399,6 +406,15 @@ pub fn sync(
                 &new_email.cache_path.to_string_lossy(),
                 &new_email.maildir_path.to_string_lossy(),
             );
+            if new_email.maildir_path.exists() {
+                warn!(
+                    "File `{}' already existed in maildir but was not indexed. Replacing...",
+                    &new_email.maildir_path.to_string_lossy(),
+                );
+                fs::remove_file(&new_email.maildir_path).context(RemoveUnindexedMailFileSnafu {
+                    path: &new_email.maildir_path,
+                })?;
+            }
             symlink_file(&new_email.cache_path, &new_email.maildir_path).context(
                 MakeMaildirSymlinkSnafu {
                     from: &new_email.cache_path,
