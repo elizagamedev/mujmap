@@ -790,13 +790,6 @@ impl Remote {
         let updates = local_emails
             .iter()
             .flat_map(|(id, local_email)| {
-                // Filter out automatic tags.
-                let tags: HashSet<String> = local_email
-                    .message
-                    .tags()
-                    .into_iter()
-                    .filter(|tag| !local::AUTOMATIC_TAGS.contains(tag.as_str()))
-                    .collect();
                 let mut patch = HashMap::new();
                 fn as_value(b: bool) -> Value {
                     if b {
@@ -813,20 +806,20 @@ impl Remote {
                 };
 
                 // Keywords.
-                patch.insert("keywords/$draft", as_value(tags.contains("draft")));
-                patch.insert("keywords/$seen", as_value(!tags.contains("unread")));
-                patch.insert("keywords/$flagged", as_value(tags.contains("flagged")));
-                patch.insert("keywords/$answered", as_value(tags.contains("replied")));
-                patch.insert("keywords/$forwarded", as_value(tags.contains("passed")));
+                patch.insert("keywords/$draft", as_value(local_email.tags.contains("draft")));
+                patch.insert("keywords/$seen", as_value(!local_email.tags.contains("unread")));
+                patch.insert("keywords/$flagged", as_value(local_email.tags.contains("flagged")));
+                patch.insert("keywords/$answered", as_value(local_email.tags.contains("replied")));
+                patch.insert("keywords/$forwarded", as_value(local_email.tags.contains("passed")));
                 if !mailboxes.roles.spam && !tags_config.spam.is_empty() {
-                    let spam = tags.contains(&tags_config.spam);
+                    let spam = local_email.tags.contains(&tags_config.spam);
                     patch.insert("keywords/$junk", as_value(spam));
                     patch.insert("keywords/$notjunk", as_value(!spam));
                 }
                 if !tags_config.phishing.is_empty() {
                     patch.insert(
                         "keywords/$phishing",
-                        as_value(tags.contains(&tags_config.phishing)),
+                        as_value(local_email.tags.contains(&tags_config.phishing)),
                     );
                 }
                 // Set mailboxes.
@@ -843,7 +836,7 @@ impl Remote {
                     mailboxes
                         .mailboxes_by_id
                         .values()
-                        .filter(|x| tags.contains(&x.tag))
+                        .filter(|x| local_email.tags.contains(&x.tag))
                         .map(|x| (x.id.0.clone(), Value::Bool(true))),
                 );
                 // If no mailboxes were found, assign to Archive.

@@ -174,11 +174,17 @@ impl Local {
     pub fn add_new_email(&self, new_email: &NewEmail) -> Result<Email, notmuch::Error> {
         debug!("Adding new email: {:?}", new_email);
         let message = self.db.index_file(&new_email.maildir_path, None)?;
+        let tags = message
+            .tags()
+            .into_iter()
+            .filter(|tag| !AUTOMATIC_TAGS.contains(tag.as_str()))
+            .collect();
         Ok(Email {
             id: new_email.remote_email.id.clone(),
             blob_id: new_email.remote_email.blob_id.clone(),
             message,
             path: new_email.maildir_path.clone(),
+            tags,
         })
     }
 
@@ -215,8 +221,9 @@ impl Local {
 pub struct Email {
     pub id: jmap::Id,
     pub blob_id: jmap::Id,
-    pub message: Message,
+    message: Message,
     pub path: PathBuf,
+    pub tags: HashSet<String>,
 }
 
 impl Email {
@@ -244,6 +251,11 @@ impl Email {
                 blob_id,
                 message: message.clone(),
                 path,
+                tags: message
+                    .tags()
+                    .into_iter()
+                    .filter(|tag| !AUTOMATIC_TAGS.contains(tag.as_str()))
+                    .collect(),
             })
             .collect()
     }
