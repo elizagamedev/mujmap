@@ -286,7 +286,7 @@ pub fn sync(
     stdout.flush().context(LogSnafu {})?;
 
     let remote_emails = remote
-        .get_emails(updated_ids.iter())
+        .get_emails(updated_ids.iter(), &mailboxes, &config.tags)
         .context(GetRemoteEmailsSnafu {})?;
 
     // Before merging, download the new files into the cache.
@@ -467,8 +467,17 @@ pub fn sync(
                     );
                     Error::ProgrammerError {}
                 })?;
+
+                // Add mailbox tags
+                let mut tags: HashSet<&str> = remote_email.tags.iter().map(|s| s.as_str()).collect();
+                for id in &remote_email.mailbox_ids {
+                    if let Some(mailbox) = mailboxes.mailboxes_by_id.get(id) {
+                        tags.insert(&mailbox.tag);
+                    }
+                }
+
                 local_email
-                    .update(remote_email, &mailboxes, &config.tags)
+                    .update(remote_email, tags)
                     .context(UpdateLocalEmailSnafu {})?;
             }
 

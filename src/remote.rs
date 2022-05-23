@@ -6,7 +6,7 @@ use std::{
 
 use crate::{
     config::{self, Config},
-    jmap::{self, Id, MailboxRole, State},
+    jmap::{self, Id, MailboxRole, State, EmailKeyword},
     local,
 };
 use itertools::Itertools;
@@ -418,6 +418,8 @@ impl Remote {
     pub fn get_emails<'a>(
         &mut self,
         email_ids: impl Iterator<Item = &'a jmap::Id>,
+        mailboxes: &Mailboxes,
+        tags_config: &config::Tags,
     ) -> Result<HashMap<Id, Email>> {
         const GET_METHOD_ID: &str = "0";
 
@@ -452,7 +454,7 @@ impl Remote {
                 expect_email_get(GET_METHOD_ID, response.method_responses.remove(0))?;
 
             for email in get_response.list {
-                emails.insert(email.id.clone(), Email::from_jmap_email(email));
+                emails.insert(email.id.clone(), Email::from_jmap_email(email, mailboxes, tags_config));
             }
         }
         Ok(emails)
@@ -784,7 +786,7 @@ impl Remote {
     ) -> Result<()> {
         // Get the latest remote email objects for the set of local emails so that we can determine
         // if we should include any ignored mailboxes in the patch.
-        let remote_emails = self.get_emails(local_emails.keys())?;
+        let remote_emails = self.get_emails(local_emails.keys(), mailboxes, tags_config)?;
 
         // Build patches.
         let updates = local_emails
@@ -948,6 +950,7 @@ pub struct Email {
     pub blob_id: Id,
     pub keywords: HashSet<jmap::EmailKeyword>,
     pub mailbox_ids: HashSet<Id>,
+    pub tags: HashSet<String>,
 }
 
 #[derive(Debug)]
@@ -963,22 +966,82 @@ impl Mailbox {
 }
 
 impl Email {
-    fn from_jmap_email(jmap_email: jmap::Email) -> Self {
+    fn from_jmap_email(
+        jmap_email: jmap::Email,
+        mailboxes: &Mailboxes,
+        tags_config: &config::Tags,
+    ) -> Self {
+        let keywords: HashSet<jmap::EmailKeyword> = jmap_email
+            .keywords
+            .into_iter()
+            .filter(|(k, v)| *v && *k != jmap::EmailKeyword::Unknown)
+            .map(|(k, _)| k)
+            .collect();
+        let mailbox_ids = jmap_email
+            .mailbox_ids
+            .into_iter()
+            .filter(|(_, v)| *v)
+            .map(|(k, _)| k)
+            .collect();
+
+        // Keywords. Consider *only* keywords which are not explicitly disabled by the config and
+        // are not already covered by a mailbox.
+        fn none_if_empty(s: &str) -> Option<&str> {
+            if s.is_empty() {
+                None
+            } else {
+                Some(s)
+            }
+        }
+        let mut tags = HashSet::new();
+        for keyword in &keywords {
+            if let Some(tag) = match keyword {
+                EmailKeyword::Answered => Some("replied"),
+                EmailKeyword::Draft => {
+                    if mailboxes.roles.draft {
+                        None
+                    } else {
+                        Some("draft")
+                    }
+                }
+                EmailKeyword::Flagged => {
+                    if mailboxes.roles.flagged {
+                        None
+                    } else {
+                        Some("flagged")
+                    }
+                }
+                EmailKeyword::Forwarded => Some("passed"),
+                EmailKeyword::Important => {
+                    if mailboxes.roles.important {
+                        None
+                    } else {
+                        none_if_empty(&tags_config.important)
+                    }
+                }
+                EmailKeyword::Phishing => none_if_empty(&tags_config.phishing),
+                _ => None,
+            } {
+                tags.insert(tag.to_string());
+            }
+        }
+        if !keywords.contains(&EmailKeyword::Seen) {
+            tags.insert("unread".to_string());
+        }
+        if !mailboxes.roles.spam
+            && !tags_config.spam.is_empty()
+            && keywords.contains(&EmailKeyword::Junk)
+            && !keywords.contains(&EmailKeyword::NotJunk)
+        {
+            tags.insert(tags_config.spam.clone());
+        }
+
         Self {
             id: jmap_email.id,
             blob_id: jmap_email.blob_id,
-            keywords: jmap_email
-                .keywords
-                .into_iter()
-                .filter(|(k, v)| *v && *k != jmap::EmailKeyword::Unknown)
-                .map(|(k, _)| k)
-                .collect(),
-            mailbox_ids: jmap_email
-                .mailbox_ids
-                .into_iter()
-                .filter(|(_, v)| *v)
-                .map(|(k, _)| k)
-                .collect(),
+            keywords,
+            mailbox_ids,
+            tags,
         }
     }
 }

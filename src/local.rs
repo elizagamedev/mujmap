@@ -1,6 +1,4 @@
-use crate::config;
 use crate::jmap;
-use crate::jmap::EmailKeyword;
 use crate::remote;
 use crate::sync::NewEmail;
 use const_format::formatcp;
@@ -263,66 +261,8 @@ impl Email {
     pub fn update(
         &self,
         remote_email: &remote::Email,
-        mailboxes: &remote::Mailboxes,
-        tags_config: &config::Tags,
+        tags: HashSet<&str>,
     ) -> Result<(), notmuch::Error> {
-        // Keywords. Consider *only* keywords which are not explicitly disabled by the config and
-        // are not already covered by a mailbox.
-        fn none_if_empty(s: &str) -> Option<&str> {
-            if s.is_empty() {
-                None
-            } else {
-                Some(s)
-            }
-        }
-        let mut tags = HashSet::new();
-        for keyword in &remote_email.keywords {
-            if let Some(tag) = match keyword {
-                EmailKeyword::Answered => Some("replied"),
-                EmailKeyword::Draft => {
-                    if mailboxes.roles.draft {
-                        None
-                    } else {
-                        Some("draft")
-                    }
-                }
-                EmailKeyword::Flagged => {
-                    if mailboxes.roles.flagged {
-                        None
-                    } else {
-                        Some("flagged")
-                    }
-                }
-                EmailKeyword::Forwarded => Some("passed"),
-                EmailKeyword::Important => {
-                    if mailboxes.roles.important {
-                        None
-                    } else {
-                        none_if_empty(&tags_config.important)
-                    }
-                }
-                EmailKeyword::Phishing => none_if_empty(&tags_config.phishing),
-                _ => None,
-            } {
-                tags.insert(tag);
-            }
-        }
-        if !mailboxes.roles.spam
-            && !tags_config.spam.is_empty()
-            && remote_email.keywords.contains(&EmailKeyword::Junk)
-            && !remote_email.keywords.contains(&EmailKeyword::NotJunk)
-        {
-            tags.insert(&tags_config.spam);
-        }
-        if !remote_email.keywords.contains(&EmailKeyword::Seen) {
-            tags.insert("unread");
-        }
-        // Mailboxes.
-        for id in &remote_email.mailbox_ids {
-            if let Some(mailbox) = mailboxes.mailboxes_by_id.get(id) {
-                tags.insert(&mailbox.tag);
-            }
-        }
         // Build diffs for tags and apply them.
         self.message.freeze()?;
         let extant_tags: HashSet<String> = self.message.tags().into_iter().collect();
