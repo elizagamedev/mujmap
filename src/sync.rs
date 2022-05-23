@@ -477,7 +477,7 @@ pub fn sync(
                 }
 
                 local_email
-                    .update(remote_email, tags)
+                    .update(tags)
                     .context(UpdateLocalEmailSnafu {})?;
             }
 

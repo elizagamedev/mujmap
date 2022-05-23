@@ -1,5 +1,4 @@
 use crate::jmap;
-use crate::remote;
 use crate::sync::NewEmail;
 use const_format::formatcp;
 use lazy_static::lazy_static;
@@ -260,7 +259,6 @@ impl Email {
 
     pub fn update(
         &self,
-        remote_email: &remote::Email,
         tags: HashSet<&str>,
     ) -> Result<(), notmuch::Error> {
         // Build diffs for tags and apply them.
@@ -277,8 +275,7 @@ impl Email {
             .filter(|&tag| !extant_tags.contains(tag))
             .collect();
         debug!(
-            "Updating local email: {:?}, {:?}, by adding tags: {tags_to_add:?}, removing tags: {tags_to_remove:?}",
-            self, remote_email
+            "Updating local email: {self:?}, by adding tags: {tags_to_add:?}, removing tags: {tags_to_remove:?}"
         );
         for tag in tags_to_remove {
             self.message.remove_tag(tag)?;
