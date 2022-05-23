@@ -476,8 +476,8 @@ pub fn sync(
                     }
                 }
 
-                local_email
-                    .update(tags)
+                local
+                    .update_email_tags(local_email, tags)
                     .context(UpdateLocalEmailSnafu {})?;
             }
 

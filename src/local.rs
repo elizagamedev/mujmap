@@ -66,6 +66,15 @@ pub enum Error {
 
 pub type Result<T, E = Error> = std::result::Result<T, E>;
 
+#[derive(Debug)]
+pub struct Email {
+    pub id: jmap::Id,
+    pub blob_id: jmap::Id,
+    message: Message,
+    pub path: PathBuf,
+    pub tags: HashSet<String>,
+}
+
 pub struct Local {
     /// Notmuch database.
     db: Database,
@@ -208,31 +217,20 @@ impl Local {
             })?;
         Ok(messages
             .into_iter()
-            .flat_map(|x| Email::from_message(x, &self.mail_cur_dir))
+            .flat_map(|x| self.emails_from_message(x))
             .map(|x| (x.id.clone(), x))
             .collect())
     }
-}
 
-#[derive(Debug)]
-pub struct Email {
-    pub id: jmap::Id,
-    pub blob_id: jmap::Id,
-    message: Message,
-    pub path: PathBuf,
-    pub tags: HashSet<String>,
-}
-
-impl Email {
     /// Returns a separate `Email` object for each duplicate email file mujmap owns.
-    fn from_message(message: Message, mail_cur_dir: &Path) -> Vec<Self> {
+    fn emails_from_message(&self, message: Message) -> Vec<Email> {
         lazy_static! {
             static ref MAIL_FILE: Regex = Regex::new(MAIL_PATTERN).unwrap();
         }
         message
             .filenames()
             .into_iter()
-            .filter(|x| x.starts_with(mail_cur_dir))
+            .filter(|x| x.starts_with(&self.mail_cur_dir))
             .flat_map(|path| {
                 MAIL_FILE
                     .captures(&path.file_name().unwrap().to_string_lossy())
@@ -243,7 +241,7 @@ impl Email {
                     })
                     .map(|(id, blob_id)| (id, blob_id, path))
             })
-            .map(|(id, blob_id, path)| Self {
+            .map(|(id, blob_id, path)| Email {
                 id,
                 blob_id,
                 message: message.clone(),
@@ -257,13 +255,14 @@ impl Email {
             .collect()
     }
 
-    pub fn update(
+    pub fn update_email_tags(
         &self,
+        email: &Email,
         tags: HashSet<&str>,
     ) -> Result<(), notmuch::Error> {
         // Build diffs for tags and apply them.
-        self.message.freeze()?;
-        let extant_tags: HashSet<String> = self.message.tags().into_iter().collect();
+        email.message.freeze()?;
+        let extant_tags: HashSet<String> = email.message.tags().into_iter().collect();
         let tags_to_remove: Vec<&str> = extant_tags
             .iter()
             .map(|tag| tag.as_str())
@@ -275,15 +274,15 @@ impl Email {
             .filter(|&tag| !extant_tags.contains(tag))
             .collect();
         debug!(
-            "Updating local email: {self:?}, by adding tags: {tags_to_add:?}, removing tags: {tags_to_remove:?}"
+            "Updating local email: {email:?}, by adding tags: {tags_to_add:?}, removing tags: {tags_to_remove:?}"
         );
         for tag in tags_to_remove {
-            self.message.remove_tag(tag)?;
+            email.message.remove_tag(tag)?;
         }
         for tag in tags_to_add {
-            self.message.add_tag(tag)?;
+            email.message.add_tag(tag)?;
         }
-        self.message.thaw()?;
+        email.message.thaw()?;
         Ok(())
     }
 }
