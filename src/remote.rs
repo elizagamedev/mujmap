@@ -617,10 +617,17 @@ impl Remote {
             .map(|(id, mailbox)| (mailbox.tag.clone(), id.clone()))
             .collect();
 
+        let ignored_ids = jmap_mailboxes
+            .values()
+            .filter(|x| archive_id != x.id && !mailboxes_by_id.contains_key(&x.id))
+            .map(|x| x.id.clone())
+            .collect();
+
         Ok(Mailboxes {
             archive_id,
             mailboxes_by_id,
             ids_by_tag,
+            ignored_ids,
             roles,
         })
     }
@@ -775,8 +782,11 @@ impl Remote {
         mailboxes: &Mailboxes,
         tags_config: &config::Tags,
     ) -> Result<()> {
+        // Get the latest remote email objects for the set of local emails so that we can determine
+        // if we should include any ignored mailboxes in the patch.
+        let remote_emails = self.get_emails(local_emails.keys())?;
+
         // Build patches.
-        let archive_patch_key = format!("mailboxIds/{}", mailboxes.archive_id);
         let updates = local_emails
             .iter()
             .map(|(id, local_email)| {
@@ -812,16 +822,29 @@ impl Remote {
                         as_value(tags.contains(&tags_config.phishing)),
                     );
                 }
-                // Mailboxes.
-                let mut must_archive = true;
-                for mailbox in mailboxes.mailboxes_by_id.values() {
-                    let contains = tags.contains(&mailbox.tag);
-                    if contains {
-                        must_archive = false;
-                    }
-                    patch.insert(&mailbox.patch_key, as_value(contains));
+                // Set mailboxes.
+                // TODO: eliminate clone here?
+                let remote_email = remote_emails.get(id).unwrap();
+                // Include all ignored mailboxes which the remote email is already included in.
+                let mut new_mailboxes: serde_json::Map<String, Value> = remote_email
+                    .mailbox_ids
+                    .iter()
+                    .filter(|x| mailboxes.ignored_ids.contains(x))
+                    .map(|x| (x.0.clone(), Value::Bool(true)))
+                    .collect();
+                // Include all mailboxes which correspond to notmuch tags.
+                new_mailboxes.extend(
+                    mailboxes
+                        .mailboxes_by_id
+                        .values()
+                        .filter(|x| tags.contains(&x.tag))
+                        .map(|x| (x.id.0.clone(), Value::Bool(true))),
+                );
+                // If no mailboxes were found, assign to Archive.
+                if new_mailboxes.is_empty() {
+                    new_mailboxes.insert(mailboxes.archive_id.0.clone(), Value::Bool(true));
                 }
-                patch.insert(&archive_patch_key, as_value(must_archive));
+                patch.insert("mailboxIds", Value::Object(new_mailboxes));
                 Ok((id, patch))
             })
             .collect::<Result<HashMap<&Id, HashMap<&str, Value>>>>()?;
@@ -901,6 +924,9 @@ pub struct Mailboxes {
     pub mailboxes_by_id: HashMap<Id, Mailbox>,
     /// A map of tags to their corresponding mailboxes.
     pub ids_by_tag: HashMap<String, Id>,
+    /// A list of IDs of mailboxes to ignore. "Ignore" here means that we will not add or remove
+    /// messages from these mailboxes, nor will we assign them to any notmuch tags.
+    pub ignored_ids: HashSet<Id>,
 
     /// An enumeration of what mailbox roles this JMAP server supports.
     pub roles: AvailableMailboxRoles,
@@ -929,13 +955,11 @@ pub struct Email {
 pub struct Mailbox {
     pub id: Id,
     pub tag: String,
-    pub patch_key: String,
 }
 
 impl Mailbox {
     fn new(id: Id, tag: String) -> Self {
-        let patch_key = format!("mailboxIds/{}", id);
-        Mailbox { id, tag, patch_key }
+        Mailbox { id, tag }
     }
 }
 
