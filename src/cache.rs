@@ -1,8 +1,10 @@
 use crate::jmap;
 use crate::sync::NewEmail;
+use core::fmt;
 use directories::ProjectDirs;
 use snafu::prelude::*;
 use snafu::Snafu;
+use std::fmt::Display;
 use std::fs;
 use std::fs::File;
 use std::io;
@@ -10,10 +12,35 @@ use std::io::Read;
 use std::path::Path;
 use std::path::PathBuf;
 
+// loe's error type does not implement Error.
+#[derive(Debug)]
+pub struct LoeParseErrorWrapper(loe::ParseError);
+
+impl Display for LoeParseErrorWrapper {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        self.0.fmt(f)
+    }
+}
+
+impl std::error::Error for LoeParseErrorWrapper {
+    fn source(&self) -> Option<&(dyn std::error::Error + 'static)> {
+        match &self.0 {
+            loe::ParseError::InvalidEncoding(_) => None,
+            loe::ParseError::IoError(e) => Some(e),
+        }
+    }
+}
+
 #[derive(Debug, Snafu)]
 pub enum Error {
     #[snafu(display("Could not create cache dir `{}': {}", path.to_string_lossy(), source))]
     CreateCacheDir { path: PathBuf, source: io::Error },
+
+    #[snafu(display("Could not create mail file `{}': {}", path.to_string_lossy(), source))]
+    CreateUnixMailFile {
+        path: PathBuf,
+        source: LoeParseErrorWrapper,
+    },
 
     #[snafu(display("Could not create mail file `{}': {}", path.to_string_lossy(), source))]
     CreateMailFile { path: PathBuf, source: io::Error },
@@ -85,7 +112,12 @@ impl Cache {
     /// failure, e.g. sudden power outage, there will (hopefully less likely) be half-downloaded
     /// mail files. JMAP doesn't expose any means of checking data integrity other than comparing
     /// blob IDs, so it's important we take every precaution.
-    pub fn download_into_cache(&self, new_email: &NewEmail, mut reader: impl Read) -> Result<()> {
+    pub fn download_into_cache(
+        &self,
+        new_email: &NewEmail,
+        mut reader: impl Read,
+        convert_dos_to_unix: bool,
+    ) -> Result<()> {
         // Download to temporary file...
         let temporary_file_path = self.cache_dir.join(format!(
             "{}in_progress_download.{}",
@@ -95,9 +127,17 @@ impl Cache {
         let mut writer = File::create(&temporary_file_path).context(CreateMailFileSnafu {
             path: &temporary_file_path,
         })?;
-        io::copy(&mut reader, &mut writer).context(CreateMailFileSnafu {
-            path: &temporary_file_path,
-        })?;
+        if convert_dos_to_unix {
+            loe::process(&mut reader, &mut writer, loe::Config::default())
+                .map_err(|e| LoeParseErrorWrapper(e))
+                .context(CreateUnixMailFileSnafu {
+                    path: &temporary_file_path,
+                })?;
+        } else {
+            io::copy(&mut reader, &mut writer).context(CreateMailFileSnafu {
+                path: &temporary_file_path,
+            })?;
+        }
         // ...and move to its proper location.
         fs::rename(&temporary_file_path, &new_email.cache_path).context(RenameMailFileSnafu {
             from: &temporary_file_path,

@@ -325,7 +325,7 @@ pub fn sync(
                 .map(|new_email| {
                     let mut retry_count = 0;
                     loop {
-                        match download(new_email, &remote, &cache) {
+                        match download(new_email, &remote, &cache, config.convert_dos_to_unix) {
                             Ok(_) => {
                                 pb.inc(1);
                                 return Ok(());
@@ -591,13 +591,18 @@ pub fn sync(
     Ok(())
 }
 
-fn download(new_email: &NewEmail, remote: &Remote, cache: &Cache) -> Result<()> {
+fn download(
+    new_email: &NewEmail,
+    remote: &Remote,
+    cache: &Cache,
+    convert_dos_to_unix: bool,
+) -> Result<()> {
     let remote_email = new_email.remote_email;
     let reader = remote
         .read_email_blob(&remote_email.blob_id)
         .context(DownloadRemoteEmailSnafu {})?;
     cache
-        .download_into_cache(&new_email, reader)
+        .download_into_cache(&new_email, reader, convert_dos_to_unix)
         .context(CacheNewEmailSnafu {})?;
     Ok(())
 }

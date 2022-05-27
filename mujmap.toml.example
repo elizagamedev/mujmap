@@ -48,6 +48,10 @@ fqdn = "fastmail.com"
 
 # auto_create_new_mailboxes = true
 
+## If true, convert all DOS newlines in downloaded mail files to Unix newlines.
+
+# convert_dos_to_unix = true
+
 
 ################################################################################
 ## Tag config

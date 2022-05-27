@@ -82,6 +82,10 @@ pub struct Config {
     #[serde(default = "default_auto_create_new_mailboxes")]
     pub auto_create_new_mailboxes: bool,
 
+    /// If true, convert all DOS newlines in downloaded mail files to Unix newlines.
+    #[serde(default = "default_convert_dos_to_unix")]
+    pub convert_dos_to_unix: bool,
+
     /// Customize the names and synchronization behaviors of notmuch tags with JMAP keywords and
     /// mailboxes.
     #[serde(default = "Default::default")]
@@ -249,6 +253,10 @@ fn default_retries() -> usize {
 }
 
 fn default_auto_create_new_mailboxes() -> bool {
+    true
+}
+
+fn default_convert_dos_to_unix() -> bool {
     true
 }
 

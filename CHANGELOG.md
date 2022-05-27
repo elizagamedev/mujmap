@@ -5,6 +5,15 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ## [Unreleased]
+### Added
+- New configuration option `convert_dos_to_unix` which converts DOS newlines to
+  Unix newlines for all newly downloaded mail files.
+
+### Changed
+- New mail files will have their line endings changed by default to Unix; see
+  the above `convert_dos_to_unix` configuration option. Existing files are
+  unaffected.
+
 ### Fixed
 - Introduced workaround for some JMAP servers which did not support the patch
   syntax that mujmap was using for updating mailboxes. (#19)
