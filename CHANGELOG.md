@@ -5,6 +5,11 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ## [Unreleased]
+### Fixed
+- Introduced workaround for some JMAP servers which did not support the patch
+  syntax that mujmap was using for updating mailboxes. (#19)
+- Mail which belongs to "ignored" mailboxes will no longer be added to the
+  `archive`-role mailbox unnecessarily.
 
 ## [0.1.1] - 2022-05-17
 ### Changed
