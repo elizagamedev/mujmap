@@ -789,7 +789,7 @@ impl Remote {
         // Build patches.
         let updates = local_emails
             .iter()
-            .map(|(id, local_email)| {
+            .flat_map(|(id, local_email)| {
                 // Filter out automatic tags.
                 let tags: HashSet<String> = local_email
                     .message
@@ -805,6 +805,13 @@ impl Remote {
                         Value::Null
                     }
                 }
+
+                // The remote email may have been destroyed.
+                let remote_email = match remote_emails.get(id) {
+                    Some(x) => x,
+                    None => return None,
+                };
+
                 // Keywords.
                 patch.insert("keywords/$draft", as_value(tags.contains("draft")));
                 patch.insert("keywords/$seen", as_value(!tags.contains("unread")));
@@ -824,7 +831,6 @@ impl Remote {
                 }
                 // Set mailboxes.
                 // TODO: eliminate clone here?
-                let remote_email = remote_emails.get(id).unwrap();
                 // Include all ignored mailboxes which the remote email is already included in.
                 let mut new_mailboxes: serde_json::Map<String, Value> = remote_email
                     .mailbox_ids
@@ -845,7 +851,7 @@ impl Remote {
                     new_mailboxes.insert(mailboxes.archive_id.0.clone(), Value::Bool(true));
                 }
                 patch.insert("mailboxIds", Value::Object(new_mailboxes));
-                Ok((id, patch))
+                Some(Ok((id, patch)))
             })
             .collect::<Result<HashMap<&Id, HashMap<&str, Value>>>>()?;
         debug!("Built patch for remote: {:?}", updates);
