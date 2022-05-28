@@ -222,7 +222,7 @@ pub fn sync(
     let local = Local::open(mail_dir, args.dry_run).context(OpenLocalSnafu {})?;
 
     // Open the local cache.
-    let cache = Cache::open(&local.mail_cur_dir).context(OpenCacheSnafu {})?;
+    let cache = Cache::open(&local.mail_cur_dir, &config).context(OpenCacheSnafu {})?;
 
     // Open the remote session.
     let mut remote = Remote::open(&config).context(OpenRemoteSnafu {})?;

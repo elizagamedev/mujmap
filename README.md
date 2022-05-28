@@ -155,3 +155,17 @@ mujmap cannot and will never be able to:
       password to stdout. If the password command fails, mujmap logs its stderr.
 - [ ] If using Fastmail, check your login logs on the website for additional
       context.
+
+### Invalid cross-device link
+This error will occur if your mail directory is stored on a different device
+than your cache directory. By default, mujmap's cache is stored in
+`XDG_CONFIG_HOME` on Linux/FreeBSD and `~/Library/Caches` on macOS. You can
+change this location by setting `config_dir` in mujmap.toml.
+
+The rationale for downloading messages into a cache instead of directly into the
+maildir is because mujmap is designed to be able to roll-back local state
+changes in the event of a catastrophic failure to the best of its ability, which
+includes not leaving mail files in the maildir which haven't been fully
+integrated into notmuch's database. As an alternative, mujmap could have
+depended on notmuch being configured to ignore in-progress downloads, but this
+is much more prone to user error.

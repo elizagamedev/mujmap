@@ -52,6 +52,11 @@ fqdn = "fastmail.com"
 
 # convert_dos_to_unix = true
 
+## The cache directory in which to store mail files while they are being
+## downloaded. The default is operating-system specific.
+
+# cache_dir =
+
 
 ################################################################################
 ## Tag config

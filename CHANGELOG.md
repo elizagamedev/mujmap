@@ -8,6 +8,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ### Added
 - New configuration option `convert_dos_to_unix` which converts DOS newlines to
   Unix newlines for all newly downloaded mail files.
+- New configuration option `cache_dir` which changes the directory where mujmap
+  downloads new files before adding them to the maildir.
 
 ### Changed
 - New mail files will have their line endings changed by default to Unix; see

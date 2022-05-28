@@ -86,6 +86,11 @@ pub struct Config {
     #[serde(default = "default_convert_dos_to_unix")]
     pub convert_dos_to_unix: bool,
 
+    /// The cache directory in which to store mail files while they are being downloaded. The
+    /// default is operating-system specific.
+    #[serde(default = "Default::default")]
+    pub cache_dir: Option<PathBuf>,
+
     /// Customize the names and synchronization behaviors of notmuch tags with JMAP keywords and
     /// mailboxes.
     #[serde(default = "Default::default")]

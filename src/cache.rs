@@ -1,3 +1,4 @@
+use crate::config::Config;
 use crate::jmap;
 use crate::sync::NewEmail;
 use core::fmt;
@@ -75,12 +76,17 @@ impl Cache {
     /// Open the local store.
     ///
     /// `mail_dir` *must* be a subdirectory of the notmuch path.
-    pub fn open(mail_cur_dir: impl AsRef<Path>) -> Result<Self> {
+    pub fn open(mail_cur_dir: impl AsRef<Path>, config: &Config) -> Result<Self> {
         let project_dirs = ProjectDirs::from("sh.eliza", "", "mujmap").unwrap();
-        let cache_dir = project_dirs.cache_dir();
+        let default_cache_dir = project_dirs.cache_dir();
+
+        let cache_dir = match &config.cache_dir {
+            Some(cache_dir) => cache_dir.as_ref(),
+            None => default_cache_dir,
+        };
 
         // Ensure the cache dir exists.
-        fs::create_dir_all(&cache_dir).context(CreateCacheDirSnafu { path: cache_dir })?;
+        fs::create_dir_all(cache_dir).context(CreateCacheDirSnafu { path: cache_dir })?;
 
         // Create the cache filename prefix for this particular maildir. More information about this
         // is found in the documentation for `Local::cached_file_prefix`.
