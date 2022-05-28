@@ -9,7 +9,6 @@ use log::debug;
 use notmuch::Database;
 use notmuch::Exclude;
 use notmuch::Message;
-use path_absolutize::*;
 use regex::Regex;
 use snafu::prelude::*;
 use snafu::Snafu;
@@ -19,6 +18,7 @@ use std::fs;
 use std::io;
 use std::path::Path;
 use std::path::PathBuf;
+use std::path::StripPrefixError;
 
 const ID_PATTERN: &'static str = r"[-A-Za-z0-9_]+";
 const MAIL_PATTERN: &'static str = formatcp!(r"^({})\.({})(?:$|:)", ID_PATTERN, ID_PATTERN);
@@ -34,8 +34,8 @@ lazy_static! {
 
 #[derive(Debug, Snafu)]
 pub enum Error {
-    #[snafu(display("Could not absolutize given path: {}", source))]
-    Absolutize { source: io::Error },
+    #[snafu(display("Could not canonicalize given path: {}", source))]
+    Canonicalize { source: io::Error },
 
     #[snafu(display(
         "Given maildir path `{}' is not a subdirectory of the notmuch root `{}'",
@@ -45,6 +45,7 @@ pub enum Error {
     MailDirNotASubdirOfNotmuchRoot {
         mail_dir: PathBuf,
         notmuch_root: PathBuf,
+        source: StripPrefixError,
     },
 
     #[snafu(display("Could not open notmuch database: {}", source))]
@@ -95,27 +96,30 @@ impl Local {
         )
         .context(OpenDatabaseSnafu {})?;
 
-        // Build new absolute path resolving all relative paths. Check to make sure it's actually a
-        // subdirectory of the notmuch root path.
-        let mail_dir = mail_dir.as_ref().absolutize().context(AbsolutizeSnafu {})?;
-
-        if !mail_dir.starts_with(db.path()) {
-            return Err(Error::MailDirNotASubdirOfNotmuchRoot {
-                mail_dir: mail_dir.into(),
-                notmuch_root: db.path().into(),
-            });
-        }
+        // Get the relative directory of the maildir to the database path.
+        let canonical_db_path = db.path().canonicalize().context(CanonicalizeSnafu {})?;
+        let canonical_mail_dir_path = mail_dir
+            .as_ref()
+            .canonicalize()
+            .context(CanonicalizeSnafu {})?;
+        let relative_mail_dir = canonical_mail_dir_path
+            .strip_prefix(&canonical_db_path)
+            .context(MailDirNotASubdirOfNotmuchRootSnafu {
+                mail_dir: &canonical_mail_dir_path,
+                notmuch_root: &canonical_db_path,
+            })?;
 
         // Build the query to search for all mail in our maildir.
-        let all_mail_query = format!(
-            "path:\"{}/**\"",
-            mail_dir.strip_prefix(db.path()).unwrap().to_str().unwrap()
-        );
+        let all_mail_query = format!("path:\"{}/**\"", relative_mail_dir.to_str().unwrap());
 
         // Ensure the maildir contains the standard cur, new, and tmp dirs.
-        let mail_cur_dir = mail_dir.join("cur");
+        let mail_cur_dir = canonical_mail_dir_path.join("cur");
         if !dry_run {
-            for path in &[&mail_cur_dir, &mail_dir.join("new"), &mail_dir.join("tmp")] {
+            for path in &[
+                &mail_cur_dir,
+                &canonical_mail_dir_path.join("new"),
+                &canonical_mail_dir_path.join("tmp"),
+            ] {
                 fs::create_dir_all(path).context(CreateMaildirDirSnafu { path })?;
             }
         }

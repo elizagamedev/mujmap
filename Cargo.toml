@@ -29,7 +29,6 @@ lazy_static = "1.4.0"
 loe = "0.2.0"
 log = "0.4.16"
 notmuch = "0.7.2"
-path-absolutize = "3.0.13"
 rayon = "1.5.2"
 regex = "1.5.5"
 serde = { version = "1.0.136", features = ["derive"] }

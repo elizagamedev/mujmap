@@ -21,6 +21,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   syntax that mujmap was using for updating mailboxes. (#19)
 - Mail which belongs to "ignored" mailboxes will no longer be added to the
   `archive`-role mailbox unnecessarily.
+- Symlinked maildirs now properly handled. (#16)
 
 ## [0.1.1] - 2022-05-17
 ### Changed
