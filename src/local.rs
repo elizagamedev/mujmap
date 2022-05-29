@@ -293,6 +293,8 @@ impl Local {
                 message.add_tag(tag)?;
             }
             message.thaw()?;
+            // XXX make configurable
+            message.tags_to_maildir_flags()?;
         }
         Ok(())
     }

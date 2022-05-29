@@ -110,6 +110,9 @@ pub enum Error {
     #[snafu(display("Could not remove local email: {}", source))]
     RemoveLocalEmail { source: notmuch::Error },
 
+    #[snafu(display("Could not get local message from notmuch: {}", source))]
+    GetNotmuchMessage { source: notmuch::Error },
+
     #[snafu(display(
         "Could not remove unindexed mail file `{}': {}",
         path.to_string_lossy(),
@@ -290,21 +293,21 @@ pub fn sync(
         .context(GetRemoteEmailsSnafu {})?;
 
     // Before merging, download the new files into the cache.
-    let new_emails: Vec<NewEmail> = remote_emails
+    let mut new_emails: HashMap<jmap::Id, NewEmail> = remote_emails
         .values()
         .filter(|remote_email| match local_emails.get(&remote_email.id) {
             Some(local_email) => local_email.blob_id != remote_email.blob_id,
             None => true,
         })
-        .map(|remote_email| NewEmail {
+        .map(|remote_email| (remote_email.id.clone(), NewEmail {
             remote_email,
             cache_path: cache.cache_path(&remote_email.id, &remote_email.blob_id),
             maildir_path: local.new_maildir_path(&remote_email.id, &remote_email.blob_id),
-        })
+        }))
         .collect();
 
     let new_emails_missing_from_cache: Vec<&NewEmail> = new_emails
-        .iter()
+        .values()
         .filter(|x| !x.cache_path.exists() && !local_emails.contains_key(&x.remote_email.id))
         .collect();
 
@@ -400,7 +403,7 @@ pub fn sync(
             .collect();
 
         // Symlink the new mail files into the maildir...
-        for new_email in &new_emails {
+        for new_email in new_emails.values() {
             debug!(
                 "Making symlink from `{}' to `{}'",
                 &new_email.cache_path.to_string_lossy(),
@@ -428,7 +431,7 @@ pub fn sync(
 
             // ...and add them to the database.
             let new_local_emails = new_emails
-                .iter()
+                .values()
                 .map(|new_email| {
                     let local_email = local
                         .add_new_email(&new_email)
@@ -479,6 +482,35 @@ pub fn sync(
                 local
                     .update_email_tags(local_email, tags)
                     .context(UpdateLocalEmailSnafu {})?;
+
+                // In `update' notmuch may have renamed the file on disk when setting maildir
+                // flags, so we need to update our idea of the filename to match so that, for new
+                // messages, we can reliably replace the symlink later.
+                //
+                // The `Message' might have multiple paths though (if more than one message has the
+                // same id) so we have to get all the filenames and then find the one that matches
+                // ours. Fortunately, our generated name (the raw JMAP mailbox.message id) will
+                // always be a substring of notmuch's version (same name with flags attached), so a
+                // starts-with test is enough.
+                if let Some(mut new_email) = new_emails.get_mut(&remote_email.id) {
+                    if let Some(our_filename) = new_email.maildir_path.file_name().map(|p| p.to_string_lossy()) {
+                        if let Some(message) =
+                            local
+                                .get_message(&local_email.message_id)
+                                .context(GetNotmuchMessageSnafu {})? {
+
+                            if let Some(new_maildir_path) = message
+                                .filenames()
+                                .into_iter()
+                                .filter(|f| f.file_name().map_or(false, |p| p.to_string_lossy().starts_with(&*our_filename)))
+                                .next() {
+
+                                new_email.maildir_path = new_maildir_path;
+                            }
+                        }
+                    }
+                }
+
             }
 
             // Finally, remove the old messages from the database.
@@ -494,7 +526,7 @@ pub fn sync(
 
         if let Err(e) = commit_changes() {
             // Remove all the symlinks.
-            for new_email in &new_emails {
+            for new_email in new_emails.values() {
                 debug!(
                     "Removing symlink `{}'",
                     &new_email.maildir_path.to_string_lossy(),
@@ -513,7 +545,7 @@ pub fn sync(
         // Now that the atomic database operation has been completed, do the actual file operations.
 
         // Replace the symlinks with the real files.
-        for new_email in &new_emails {
+        for new_email in new_emails.values() {
             debug!(
                 "Moving mail from `{}' to `{}'",
                 &new_email.cache_path.to_string_lossy(),
