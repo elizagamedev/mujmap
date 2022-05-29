@@ -6,6 +6,7 @@ use log::debug;
 use notmuch::Database;
 use notmuch::Exclude;
 use notmuch::Message;
+use notmuch::ConfigKey;
 use regex::Regex;
 use snafu::prelude::*;
 use snafu::Snafu;
@@ -82,6 +83,8 @@ pub struct Local {
     pub mail_cur_dir: PathBuf,
     /// Notmuch search query which searches for all mail in mujmap's maildir.
     all_mail_query: String,
+    /// Flag, whether or not notmuch should add maildir flags to message filenames.
+    pub synchronize_maildir_flags: bool,
 }
 
 impl Local {
@@ -130,10 +133,13 @@ impl Local {
             }
         }
 
+        let synchronize_maildir_flags = db.config_bool(ConfigKey::MaildirFlags).unwrap_or(true);
+
         Ok(Self {
             db,
             mail_cur_dir,
             all_mail_query,
+            synchronize_maildir_flags,
         })
     }
 
@@ -293,8 +299,9 @@ impl Local {
                 message.add_tag(tag)?;
             }
             message.thaw()?;
-            // XXX make configurable
-            message.tags_to_maildir_flags()?;
+            if self.synchronize_maildir_flags {
+                message.tags_to_maildir_flags()?;
+            }
         }
         Ok(())
     }
