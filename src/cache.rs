@@ -1,36 +1,15 @@
 use crate::config::Config;
 use crate::jmap;
 use crate::sync::NewEmail;
-use core::fmt;
 use directories::ProjectDirs;
 use snafu::prelude::*;
 use snafu::Snafu;
-use std::fmt::Display;
 use std::fs;
 use std::fs::File;
 use std::io;
 use std::io::Read;
 use std::path::Path;
 use std::path::PathBuf;
-
-// loe's error type does not implement Error.
-#[derive(Debug)]
-pub struct LoeParseErrorWrapper(loe::ParseError);
-
-impl Display for LoeParseErrorWrapper {
-    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-        self.0.fmt(f)
-    }
-}
-
-impl std::error::Error for LoeParseErrorWrapper {
-    fn source(&self) -> Option<&(dyn std::error::Error + 'static)> {
-        match &self.0 {
-            loe::ParseError::InvalidEncoding(_) => None,
-            loe::ParseError::IoError(e) => Some(e),
-        }
-    }
-}
 
 #[derive(Debug, Snafu)]
 pub enum Error {
@@ -40,7 +19,7 @@ pub enum Error {
     #[snafu(display("Could not create mail file `{}': {}", path.to_string_lossy(), source))]
     CreateUnixMailFile {
         path: PathBuf,
-        source: LoeParseErrorWrapper,
+        source: loe::ParseError,
     },
 
     #[snafu(display("Could not create mail file `{}': {}", path.to_string_lossy(), source))]
@@ -134,11 +113,11 @@ impl Cache {
             path: &temporary_file_path,
         })?;
         if convert_dos_to_unix {
-            loe::process(&mut reader, &mut writer, loe::Config::default())
-                .map_err(|e| LoeParseErrorWrapper(e))
-                .context(CreateUnixMailFileSnafu {
+            loe::process(&mut reader, &mut writer, loe::Config::default()).context(
+                CreateUnixMailFileSnafu {
                     path: &temporary_file_path,
-                })?;
+                },
+            )?;
         } else {
             io::copy(&mut reader, &mut writer).context(CreateMailFileSnafu {
                 path: &temporary_file_path,
