@@ -244,20 +244,6 @@ pub struct GenericObjectWithId {
     pub id: Id,
 }
 
-/// If a method encounters an error, the appropriate error response MUST be inserted at the current
-/// point in the methodResponses array and, unless otherwise specified, further processing MUST NOT
-/// happen within that method call.
-///
-/// Any further method calls in the request MUST then be processed as normal. Errors at the method
-/// level MUST NOT generate an HTTP-level error.
-#[derive(Debug, Deserialize)]
-#[serde(rename_all = "camelCase")]
-pub struct MethodResponseError {
-    #[serde(rename = "type")]
-    pub kind: MethodResponseErrorKind,
-    pub description: Option<String>,
-}
-
 #[derive(Debug, Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub struct Email {
@@ -357,9 +343,15 @@ pub enum MethodResponse {
     Error(MethodResponseError),
 }
 
-#[derive(Debug, Deserialize, Copy, Clone)]
-#[serde(rename_all = "camelCase")]
-pub enum MethodResponseErrorKind {
+/// If a method encounters an error, the appropriate error response MUST be inserted at the current
+/// point in the methodResponses array and, unless otherwise specified, further processing MUST NOT
+/// happen within that method call.
+///
+/// Any further method calls in the request MUST then be processed as normal. Errors at the method
+/// level MUST NOT generate an HTTP-level error.
+#[derive(Debug, Deserialize)]
+#[serde(tag = "type", rename_all = "camelCase")]
+pub enum MethodResponseError {
     /// The accountId does not correspond to a valid account.
     AccountNotFound,
     /// The accountId given corresponds to a valid account, but the account does not support this
@@ -373,7 +365,8 @@ pub enum MethodResponseErrorKind {
     /// The server forbids duplicates, and the record already exists in the target account. An
     /// existingId property of type Id MUST be included on the `MethodResponseError` object with the
     /// id of the existing record.
-    AlreadyExists,
+    #[serde(rename_all = "camelCase")]
+    AlreadyExists { existing_id: Id },
     /// The server cannot calculate the changes from the state string given by the client.
     CannotCalculateChanges,
     /// The action would violate an ACL or other permissions policy.
@@ -385,11 +378,11 @@ pub enum MethodResponseErrorKind {
     FromAccountNotSupportedByMethod,
     /// One of the arguments is of the wrong type or otherwise invalid, or a required argument is
     /// missing.
-    InvalidArguments,
+    InvalidArguments { description: Option<String> },
     /// The PatchObject given to update the record was not a valid patch.
     InvalidPatch,
     /// The record given is invalid.
-    InvalidProperties,
+    InvalidProperties { properties: Option<Vec<String>> },
     /// The id given cannot be found.
     NotFound,
     /// The content type of the request was not application/json or the request did not parse as
@@ -410,7 +403,7 @@ pub enum MethodResponseErrorKind {
     InvalidResultReference,
     /// An unexpected or unknown error occurred during the processing of the call. The method call
     /// made no changes to the server’s state.
-    ServerFail,
+    ServerFail { description: Option<String> },
     /// Some, but not all, expected changes described by the method occurred. The client MUST
     /// re-synchronise impacted data to determine server state. Use of this error is strongly
     /// discouraged.
@@ -424,7 +417,8 @@ pub enum MethodResponseErrorKind {
     StateMismatch,
     /// The action would result in an object that exceeds a server-defined limit for the maximum
     /// size of a single object of this type.
-    TooLarge,
+    #[serde(rename_all = "camelCase")]
+    TooLarge { max_size: u64 },
     /// There are more changes than the client’s maxChanges argument.
     TooManyChanges,
     /// The client included a capability in the “using” property of the request that the server does
@@ -447,24 +441,27 @@ pub enum MethodResponseErrorKind {
     /// was false.
     MailboxHasEmail,
     /// At least one blob id referenced in the object doesn’t exist.
-    BlobNotFound,
+    #[serde(rename_all = "camelCase")]
+    BlobNotFound { not_found: Vec<Id> },
     /// The change to the Email’s keywords would exceed a server-defined maximum.
     TooManyKeywords,
     /// The change to the set of Mailboxes that this Email is in would exceed a server-defined
     /// maximum.
     TooManyMailboxes,
     /// The Email to be sent is invalid in some way.
-    InvalidEmail,
+    InvalidEmail { properties: Option<Vec<String>> },
     /// The envelope \[[RFC5321](https://datatracker.ietf.org/doc/html/rfc5321)\] (supplied or
     /// generated) has more recipients than the server allows.
-    TooManyRecipients,
+    #[serde(rename_all = "camelCase")]
+    TooManyRecipients { max_recipients: u64 },
     /// The envelope \[[RFC5321](https://datatracker.ietf.org/doc/html/rfc5321)\] (supplied or
     /// generated) does not have any rcptTo email addresses.
     NoRecipients,
     /// The rcptTo property of the envelope
     /// \[[RFC5321](https://datatracker.ietf.org/doc/html/rfc5321)\] (supplied or generated)
     /// contains at least one rcptTo value that is not a valid email address for sending to.
-    InvalidRecipients,
+    #[serde(rename_all = "camelCase")]
+    InvalidRecipients { invalid_recipients: Vec<String> },
     /// The server does not permit the user to send a message with this envelope From address
     /// \[[RFC5321](https://datatracker.ietf.org/doc/html/rfc5321)\].
     ForbiddenMailFrom,
@@ -472,5 +469,5 @@ pub enum MethodResponseErrorKind {
     /// \[[RFC5321](https://datatracker.ietf.org/doc/html/rfc5321)\] of the message to be sent.
     ForbiddenFrom,
     /// The user does not have permission to send at all right now.
-    ForbiddenToSend,
+    ForbiddenToSend { description: Option<String> },
 }

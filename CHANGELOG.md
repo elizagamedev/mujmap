@@ -15,6 +15,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - New mail files will have their line endings changed by default to Unix; see
   the above `convert_dos_to_unix` configuration option. Existing files are
   unaffected.
+- Most JMAP error objects now contain additional properties besides
+  "description". (#20)
 
 ### Fixed
 - Introduced workaround for some JMAP servers which did not support the patch
