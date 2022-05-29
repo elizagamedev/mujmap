@@ -18,11 +18,11 @@ Contributions very welcome!
 
 **If you do decide to use mujmap**, please look at the list of open issues
 first. If you are installing the latest Cargo release instead of the latest git
-revision, **also consider** looking at the issues which have since been closed
-since the latest Cargo release.
+revision, **also consider** looking at the issues in the
+[changelog](https://github.com/elizagamedev/mujmap/blob/main/CHANGELOG.md) that
+have been found and resolved since the latest release.
 
 ## Installation
-
 Please first read the [Disclaimer](#disclaimer) section.
 
 Install with [cargo](https://doc.rust-lang.org/cargo/):
@@ -38,8 +38,10 @@ regularly being fixed:
 cargo install --git https://github.com/elizagamedev/mujmap
 ```
 
-Plans also include an official [Nix package](https://nixos.org/) and
-[home-manager](https://github.com/nix-community/home-manager) module.
+There is also an official [Nix
+package](https://github.com/NixOS/nixpkgs/blob/9306977ecb2a9ed771aeeafd48baf00432a49dd4/pkgs/applications/networking/mujmap/default.nix).
+A [home-manager module](https://github.com/nix-community/home-manager/pull/2960)
+is underway.
 
 ## Usage
 mujmap can be the sole mail agent in your notmuch database or live alongside

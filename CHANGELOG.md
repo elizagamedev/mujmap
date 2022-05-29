@@ -24,6 +24,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - Mail which belongs to "ignored" mailboxes will no longer be added to the
   `archive`-role mailbox unnecessarily.
 - Symlinked maildirs now properly handled. (#16)
+- Messages managed by mujmap now synchronize their tags with the maildir flags
+  if notmuch is configured to do so. This fixes interfaces which depend on such
+  flags being present, like neomutt. (#8)
 
 ## [0.1.1] - 2022-05-17
 ### Changed
