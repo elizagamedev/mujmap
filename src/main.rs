@@ -51,14 +51,14 @@ fn try_main(stdout: &mut StandardStream) -> Result<(), Error> {
         .to_owned();
 
     // Determine working directory and load all data files.
-    let mail_dir = args.path.clone().unwrap_or_else(|| PathBuf::from("."));
+    let config_dir = args.path.clone().unwrap_or_else(|| PathBuf::from("."));
 
-    let config = Config::from_file(mail_dir.join("mujmap.toml")).context(OpenConfigFileSnafu {})?;
+    let config = Config::from_file(config_dir.join("mujmap.toml")).context(OpenConfigFileSnafu {})?;
     debug!("Using config: {:?}", config);
 
     match &args.command {
         args::Command::Sync => {
-            sync(stdout, info_color_spec, mail_dir, args, config).context(SyncSnafu {})
+            sync(stdout, info_color_spec, config_dir, args, config).context(SyncSnafu {})
         }
         args::Command::Send => todo!(),
     }

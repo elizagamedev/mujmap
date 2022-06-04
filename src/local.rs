@@ -14,9 +14,7 @@ use std::collections::HashMap;
 use std::collections::HashSet;
 use std::fs;
 use std::io;
-use std::path::Path;
 use std::path::PathBuf;
-use std::path::StripPrefixError;
 
 const ID_PATTERN: &'static str = r"[-A-Za-z0-9_]+";
 const MAIL_PATTERN: &'static str = formatcp!(r"^({})\.({})(?:$|:)", ID_PATTERN, ID_PATTERN);
@@ -80,7 +78,7 @@ impl Local {
     /// Open the local store.
     ///
     /// `mail_dir` *must* be a subdirectory of the notmuch path.
-    pub fn open(mail_dir: impl AsRef<Path>, dry_run: bool) -> Result<Self> {
+    pub fn open(dry_run: bool) -> Result<Self> {
         // Open the notmuch database with default config options.
         let db = Database::open_with_config::<PathBuf, PathBuf>(
             None,
