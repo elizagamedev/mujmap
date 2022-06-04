@@ -35,17 +35,6 @@ pub enum Error {
     #[snafu(display("Could not canonicalize given path: {}", source))]
     Canonicalize { source: io::Error },
 
-    #[snafu(display(
-        "Given maildir path `{}' is not a subdirectory of the notmuch root `{}'",
-        mail_dir.to_string_lossy(),
-        notmuch_root.to_string_lossy(),
-    ))]
-    MailDirNotASubdirOfNotmuchRoot {
-        mail_dir: PathBuf,
-        notmuch_root: PathBuf,
-        source: StripPrefixError,
-    },
-
     #[snafu(display("Could not open notmuch database: {}", source))]
     OpenDatabase { source: notmuch::Error },
 
@@ -105,21 +94,21 @@ impl Local {
         )
         .context(OpenDatabaseSnafu {})?;
 
-        // Get the relative directory of the maildir to the database path.
-        let canonical_db_path = db.path().canonicalize().context(CanonicalizeSnafu {})?;
-        let canonical_mail_dir_path = mail_dir
-            .as_ref()
+        // Find the mail dir, either notmuch's idea, or just under the data dir.
+        let canonical_mail_dir_path = db
+            .config(ConfigKey::MailRoot)
+            .map_or(
+                db.path().into(),
+                |root| PathBuf::from(root)
+            )
             .canonicalize()
             .context(CanonicalizeSnafu {})?;
-        let relative_mail_dir = canonical_mail_dir_path
-            .strip_prefix(&canonical_db_path)
-            .context(MailDirNotASubdirOfNotmuchRootSnafu {
-                mail_dir: &canonical_mail_dir_path,
-                notmuch_root: &canonical_db_path,
-            })?;
+
+
+        debug!("mail dir: {}", canonical_mail_dir_path.to_str().unwrap());
 
         // Build the query to search for all mail in our maildir.
-        let all_mail_query = format!("path:\"{}/**\"", relative_mail_dir.to_str().unwrap());
+        let all_mail_query = "path:**".to_string();
 
         // Ensure the maildir contains the standard cur, new, and tmp dirs.
         let mail_cur_dir = canonical_mail_dir_path.join("cur");
