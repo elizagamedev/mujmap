@@ -68,8 +68,6 @@ pub struct Local {
     db: Database,
     /// The path to mujmap's maildir/cur.
     pub mail_cur_dir: PathBuf,
-    /// Notmuch search query which searches for all mail in mujmap's maildir.
-    all_mail_query: String,
     /// Flag, whether or not notmuch should add maildir flags to message filenames.
     pub synchronize_maildir_flags: bool,
 }
@@ -105,9 +103,6 @@ impl Local {
 
         debug!("mail dir: {}", canonical_mail_dir_path.to_str().unwrap());
 
-        // Build the query to search for all mail in our maildir.
-        let all_mail_query = "path:**".to_string();
-
         // Ensure the maildir contains the standard cur, new, and tmp dirs.
         let mail_cur_dir = canonical_mail_dir_path.join("cur");
         if !dry_run {
@@ -125,7 +120,6 @@ impl Local {
         Ok(Self {
             db,
             mail_cur_dir,
-            all_mail_query,
             synchronize_maildir_flags,
         })
     }
@@ -141,14 +135,13 @@ impl Local {
 
     /// Return all `Email`s that mujmap owns for this maildir.
     pub fn all_emails(&self) -> Result<HashMap<jmap::Id, Email>> {
-        self.query(&self.all_mail_query)
+        self.query("path:**")
     }
 
     /// Return all `Email`s that mujmap owns which were modified since the given database revision.
     pub fn all_emails_since(&self, last_revision: u64) -> Result<HashMap<jmap::Id, Email>> {
         self.query(&format!(
-            "{} and lastmod:{}..{}",
-            self.all_mail_query,
+            "path:** and lastmod:{}..{}",
             last_revision,
             self.revision()
         ))
