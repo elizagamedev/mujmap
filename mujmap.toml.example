@@ -12,10 +12,11 @@ password_command = "pass example@fastmail.com"
 
 ## Fully qualified domain name of the JMAP service.
 ##
-## mujmap looks up the JMAP SRV record for this host to determine the JMAP
-## session URL. Mutually exclusive with `session_url`.
+## mujmap looks up the JMAP SRV record for the domain part of the username to
+## determine the JMAP session URL. Setting `fqdn` will cause it to use an
+## alternate name for that lookup.  Mutually exclusive with `session_url`.
 
-fqdn = "fastmail.com"
+# fqdn = "fastmail.com"
 
 ## Session URL to connect to.
 ##

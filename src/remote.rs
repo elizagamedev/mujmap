@@ -22,6 +22,9 @@ pub enum Error {
     #[snafu(display("Could not get password from config: {}", source))]
     GetPassword { source: config::Error },
 
+    #[snafu(display("Couldn't determine domain name from `username`"))]
+    NoDomainName {},
+
     #[snafu(display("Could not determine DNS settings from resolv.conf: {}", source))]
     ParseResolvConf { source: io::Error },
 
@@ -162,16 +165,20 @@ pub struct Remote {
 impl Remote {
     pub fn open(config: &Config) -> Result<Self> {
         let password = config.password().context(GetPasswordSnafu {})?;
-        match &config.fqdn {
-            Some(fqdn) => {
+        match (&config.fqdn, &config.session_url) {
+            (Some(fqdn),_) => {
                 Self::open_host(&fqdn, config.username.as_str(), &password, config.timeout)
-            }
-            None => Remote::open_url(
-                &config.session_url.as_ref().unwrap(),
+            },
+            (_,Some(session_url)) => Remote::open_url(
+                &session_url.as_str(),
                 config.username.as_str(),
                 &password,
                 config.timeout,
             ),
+            _ => {
+                let (_,domain) = config.username.split_once('@').context(NoDomainNameSnafu {})?;
+                Self::open_host(domain, config.username.as_str(), &password, config.timeout)
+            },
         }
     }
 
