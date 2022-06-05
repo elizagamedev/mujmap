@@ -276,7 +276,7 @@ impl Config {
 
         // Perform final validation.
         ensure!(
-            config.fqdn.is_some() != config.session_url.is_some(),
+            !(config.fqdn.is_some() && config.session_url.is_some()),
             FqdnOrSessionUrlSnafu {}
         );
         ensure!(

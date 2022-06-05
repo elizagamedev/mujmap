@@ -10,6 +10,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   Unix newlines for all newly downloaded mail files.
 - New configuration option `cache_dir` which changes the directory where mujmap
   downloads new files before adding them to the maildir.
+- By default, try to discover the JMAP server from the domain part of the
+  `username` configuration option. (#28)
 
 ### Changed
 - New mail files will have their line endings changed by default to Unix; see
