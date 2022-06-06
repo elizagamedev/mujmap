@@ -102,12 +102,19 @@ goes into more detail.
 
 ### Sending
 Use `mujmap send` to send an email. This subcommand is designed to operate
-mostly like `sendmail`; i.e., it reads an
+mostly like sendmail; i.e., it reads an
 [RFC5322](https://datatracker.ietf.org/doc/html/rfc5322) mail file from stdin
 and sends it off into cyberspace. That said, this interface is still
-experimental and support/compatibility for all of `sendmail`'s various CLI
-options is nonexistent, and when implemented, will likely be extremely limited
-in scope.
+experimental.
+
+The arguments `-i`, `-oi`, `-f`, and `-F` are all accepted but ignored for
+sendmail compatibility. The sender is always determined from the email message
+itself.
+
+The recipients are specified in the same way as sendmail. They must either be
+specified at the end of the argument list, or mujmap can infer them from the
+message itself if you specify `-t`. If `-t` is specified, any recipient
+arguments at the end of the message are ignored, and mujmap will warn you.
 
 #### Emacs configuration
 ```elisp

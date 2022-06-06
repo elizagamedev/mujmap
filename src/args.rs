@@ -35,5 +35,22 @@ pub enum Command {
     /// Synchronize mail.
     Sync,
     /// Send mail.
-    Send,
+    Send {
+        /// Ignored sendmail-compatible flag.
+        #[clap(short = 'i')]
+        sendmail1: bool,
+        /// Ignored sendmail-compatible flag.
+        #[clap(short = 'f', name = "NAME")]
+        sendmail2: Option<String>,
+        /// Ignored sendmail-compatible flag.
+        #[clap(short = 'F', name = "FULLNAME")]
+        sendmail3: Option<String>,
+        /// Read the message to obtain recipients.
+        ///
+        /// If specified, the recipient arguments are ignored.
+        #[clap(short = 't', long)]
+        read_recipients: bool,
+        /// Email addresses of the recipients of the message.
+        recipients: Vec<String>,
+    },
 }

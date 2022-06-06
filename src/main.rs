@@ -24,8 +24,8 @@ use config::Config;
 use log::debug;
 use send::send;
 use snafu::prelude::*;
-use std::io::Write;
 use std::path::PathBuf;
+use std::{env, io::Write};
 use sync::sync;
 use termcolor::{Color, ColorChoice, ColorSpec, StandardStream, WriteColor};
 
@@ -44,7 +44,11 @@ pub enum Error {
 pub type Result<T, E = Error> = std::result::Result<T, E>;
 
 fn try_main(stdout: &mut StandardStream) -> Result<(), Error> {
-    let args = Args::parse();
+    // HACK: Remove -oi from the command-line arguments. If someone is weird enough to have named
+    // their maildir "-oi", or something like that, this would cause mujmap to fail unnecessarily.
+    // However, clap does not yet support "long" arguments with more than one character, so this is
+    // our best option. See: https://github.com/clap-rs/clap/issues/1210
+    let args = Args::parse_from(env::args().into_iter().filter(|a| a != "-oi"));
 
     env_logger::Builder::new()
         .filter_level(args.verbose.log_level_filter())
@@ -62,11 +66,15 @@ fn try_main(stdout: &mut StandardStream) -> Result<(), Error> {
     let config = Config::from_file(mail_dir.join("mujmap.toml")).context(OpenConfigFileSnafu {})?;
     debug!("Using config: {:?}", config);
 
-    match &args.command {
+    match args.command {
         args::Command::Sync => {
             sync(stdout, info_color_spec, mail_dir, args, config).context(SyncSnafu {})
         }
-        args::Command::Send => send(config).context(SendSnafu {}),
+        args::Command::Send {
+            read_recipients,
+            recipients,
+            ..
+        } => send(read_recipients, recipients, config).context(SendSnafu {}),
     }
 }
 

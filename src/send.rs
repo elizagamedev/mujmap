@@ -1,6 +1,6 @@
 use either::Either;
 use fqdn::FQDN;
-use log::debug;
+use log::{debug, warn};
 use snafu::prelude::*;
 use std::{
     collections::HashSet,
@@ -70,13 +70,16 @@ pub enum Error {
     #[snafu(display("Could not index mailboxes: {}", source))]
     IndexMailboxes { source: remote::Error },
 
+    #[snafu(display("No recipients specified. Did you forget to specify `-t'?"))]
+    NoRecipients {},
+
     #[snafu(display("Could not send email: {}", source))]
     SendEmail { source: remote::Error },
 }
 
 pub type Result<T, E = Error> = std::result::Result<T, E>;
 
-pub fn send(config: Config) -> Result<()> {
+pub fn send(read_recipients: bool, recipients: Vec<String>, config: Config) -> Result<()> {
     // Read mail from stdin, converting Unix newlines to DOS newlines to coimply with RFC5322.
     // Truncate the input so we don't infinitely grow a buffer if someone pipes /dev/urandom into
     // mujmap or something similar by mistake.
@@ -108,20 +111,33 @@ pub fn send(config: Config) -> Result<()> {
             |x| Either::Right(x.into_iter()),
         )
     };
-    let to_addresses: HashSet<String> = addresses_to_iter(parsed_email.to)
-        .chain(addresses_to_iter(parsed_email.cc))
-        .chain(addresses_to_iter(parsed_email.bcc))
-        .flat_map(|x| match x {
-            email_parser::address::Address::Mailbox(mailbox) => {
-                Either::Left(iter::once(address_to_string(&mailbox.address)))
-            }
-            email_parser::address::Address::Group((_, mailboxes)) => Either::Right(
-                mailboxes
-                    .into_iter()
-                    .map(|mailbox| address_to_string(&mailbox.address)),
-            ),
-        })
-        .collect();
+    let to_addresses: HashSet<String> = if read_recipients {
+        if !recipients.is_empty() {
+            warn!(concat!(
+                "Both `-t' and recipients were specified in the same command; ",
+                "ignoring recipient arguments"
+            ));
+        }
+        addresses_to_iter(parsed_email.to)
+            .chain(addresses_to_iter(parsed_email.cc))
+            .chain(addresses_to_iter(parsed_email.bcc))
+            .flat_map(|x| match x {
+                email_parser::address::Address::Mailbox(mailbox) => {
+                    Either::Left(iter::once(address_to_string(&mailbox.address)))
+                }
+                email_parser::address::Address::Group((_, mailboxes)) => Either::Right(
+                    mailboxes
+                        .into_iter()
+                        .map(|mailbox| address_to_string(&mailbox.address)),
+                ),
+            })
+            .collect()
+    } else {
+        // TODO: Locally verify that all recipients are valid email addresses.
+        recipients.into_iter().collect()
+    };
+
+    ensure!(!to_addresses.is_empty(), NoRecipientsSnafu {});
 
     debug!(
         "Envelope sender is `{}', recipients are `{:?}'",
