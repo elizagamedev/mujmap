@@ -12,6 +12,8 @@ mod jmap;
 mod local;
 /// Remote JMAP interface.
 mod remote;
+/// Send command.
+mod send;
 /// Sync command.
 mod sync;
 
@@ -20,6 +22,7 @@ use atty::Stream;
 use clap::Parser;
 use config::Config;
 use log::debug;
+use send::send;
 use snafu::prelude::*;
 use std::io::Write;
 use std::path::PathBuf;
@@ -33,6 +36,9 @@ pub enum Error {
 
     #[snafu(display("Could not sync mail: {}", source))]
     Sync { source: sync::Error },
+
+    #[snafu(display("Could not send mail: {}", source))]
+    Send { source: send::Error },
 }
 
 pub type Result<T, E = Error> = std::result::Result<T, E>;
@@ -60,7 +66,7 @@ fn try_main(stdout: &mut StandardStream) -> Result<(), Error> {
         args::Command::Sync => {
             sync(stdout, info_color_spec, mail_dir, args, config).context(SyncSnafu {})
         }
-        args::Command::Send => todo!(),
+        args::Command::Send => send(config).context(SendSnafu {}),
     }
 }
 

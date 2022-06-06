@@ -1,4 +1,4 @@
-use super::{Id, State};
+use super::{EmailKeyword, Id, State};
 use serde::{ser::SerializeSeq, Serialize, Serializer};
 use serde_json::Value;
 use std::collections::HashMap;
@@ -7,6 +7,8 @@ use std::collections::HashMap;
 pub enum CapabilityKind {
     #[serde(rename = "urn:ietf:params:jmap:mail")]
     Mail,
+    #[serde(rename = "urn:ietf:params:jmap:submission")]
+    Submission,
 }
 
 #[derive(Serialize)]
@@ -68,11 +70,20 @@ impl<'a> Serialize for RequestInvocation<'a> {
             MethodCall::EmailSet { .. } => {
                 seq.serialize_element("Email/set")?;
             }
+            MethodCall::EmailImport { .. } => {
+                seq.serialize_element("Email/import")?;
+            }
             MethodCall::MailboxGet { .. } => {
                 seq.serialize_element("Mailbox/get")?;
             }
             MethodCall::MailboxSet { .. } => {
                 seq.serialize_element("Mailbox/set")?;
+            }
+            MethodCall::IdentityGet { .. } => {
+                seq.serialize_element("Identity/get")?;
+            }
+            MethodCall::EmailSubmissionSet { .. } => {
+                seq.serialize_element("EmailSubmission/set")?;
             }
         }
 
@@ -110,6 +121,14 @@ pub enum MethodCall<'a> {
     },
 
     #[serde(rename_all = "camelCase")]
+    EmailImport {
+        /// The id of the account to use.
+        account_id: &'a Id,
+        /// A map of creation id (client specified) to `EmailImport` objects.
+        emails: HashMap<&'a Id, EmailImport<'a>>,
+    },
+
+    #[serde(rename_all = "camelCase")]
     MailboxGet {
         #[serde(flatten)]
         get: MethodCallGet<'a>,
@@ -119,6 +138,25 @@ pub enum MethodCall<'a> {
     MailboxSet {
         #[serde(flatten)]
         set: MethodCallSet<'a, MailboxCreate>,
+    },
+
+    #[serde(rename_all = "camelCase")]
+    IdentityGet {
+        #[serde(flatten)]
+        get: MethodCallGet<'a>,
+    },
+
+    #[serde(rename_all = "camelCase")]
+    EmailSubmissionSet {
+        #[serde(flatten)]
+        set: MethodCallSet<'a, EmailSubmissionCreate<'a>>,
+        /// A map of `EmailSubmission` id to an object containing properties to update on the
+        /// `Email` object referenced by the `EmailSubmission` if the create/update/destroy
+        /// succeeds. (For references to `EmailSubmission`s created in the same "/set" invocation,
+        /// this is equivalent to a creation-reference, so the id will be the creation id prefixed
+        /// with a "#".)
+        #[serde(skip_serializing_if = "Option::is_none")]
+        on_success_update_email: Option<HashMap<&'a Id, HashMap<&'a str, Value>>>,
     },
 }
 
@@ -254,7 +292,7 @@ pub struct MethodCallSet<'a, C> {
     /// A list of ids for `Foo` objects to permanently delete, or `None` if no objects are to be
     /// destroyed.
     #[serde(skip_serializing_if = "Option::is_none")]
-    pub destroy: Option<Vec<&'a Id>>,
+    pub destroy: Option<&'a [&'a Id]>,
 }
 
 #[derive(Serialize)]
@@ -267,6 +305,7 @@ pub struct MailboxCreate {
     /// The Mailbox id for the parent of this `Mailbox`, or `None` if this Mailbox is at the top
     /// level. Mailboxes form acyclic graphs (forests) directed by the child-to-parent relationship.
     /// There MUST NOT be a loop.
+    #[serde(skip_serializing_if = "Option::is_none")]
     pub parent_id: Option<Id>,
     /// User-visible name for the Mailbox, e.g., “Inbox”. This MUST be a Net-Unicode string
     /// \[[RFC5198](https://datatracker.ietf.org/doc/html/rfc5198)\] of at least 1 character in
@@ -274,6 +313,57 @@ pub struct MailboxCreate {
     /// sibling Mailboxes with both the same parent and the same name. Servers MAY reject names that
     /// violate server policy (e.g., names containing a slash (/) or control characters).
     pub name: String,
+}
+
+#[derive(Debug, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct EmailImport<'a> {
+    /// The id of the blob containing the raw message
+    /// \[[RFC5322](https://datatracker.ietf.org/doc/html/rfc5322)\].
+    pub blob_id: Id,
+    /// The ids of the Mailboxes to assign this Email to. At least one Mailbox MUST be given.
+    pub mailbox_ids: HashMap<&'a Id, bool>,
+    /// The keywords to apply to the Email.
+    pub keywords: HashMap<EmailKeyword, bool>,
+}
+
+#[derive(Debug, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct EmailSubmissionCreate<'a> {
+    /// The id of the Identity to associate with this submission.
+    pub identity_id: &'a Id,
+    /// The id of the `Email` to send. The `Email` being sent does not have to be a draft, for
+    /// example, when "redirecting" an existing `Email` to a different address.
+    pub email_id: &'a Id,
+    /// Information for use when sending via SMTP.
+    ///
+    /// NB: The JMAP spec says that this can be omitted by the client and the server MUST generate
+    /// it instead from the email headers. Fastmail does not support this.
+    pub envelope: Envelope<'a>,
+}
+
+#[derive(Debug, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct Envelope<'a> {
+    /// The email address to use as the return address in the SMTP submission, plus any parameters
+    /// to pass with the MAIL FROM address. The JMAP server MAY allow the address to be the empty
+    /// string.
+    ///
+    /// When a JMAP server performs an SMTP message submission, it MAY use the same id string for
+    /// the ENVID parameter [RFC3461] and the `EmailSubmission` object id. Servers that do this MAY
+    /// replace a client-provided value for ENVID with a server-provided value.
+    pub mail_from: Address<'a>,
+    /// The email addresses to send the message to, and any RCPT TO parameters to pass with the
+    /// recipient.
+    pub rcpt_to: &'a [Address<'a>],
+}
+
+#[derive(Debug, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct Address<'a> {
+    /// The email address being represented by the object. This is a "Mailbox" as used in the
+    /// Reverse-path or Forward-path of the MAIL FROM or RCPT TO command in [RFC532].
+    pub email: &'a str,
 }
 
 fn default<T: Default + PartialEq>(t: &T) -> bool {

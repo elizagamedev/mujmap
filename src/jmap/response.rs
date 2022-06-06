@@ -2,9 +2,12 @@ use serde::{
     de::{Error, SeqAccess, Visitor},
     Deserialize, Deserializer,
 };
-use std::{collections::HashMap, fmt};
+use std::{
+    collections::HashMap,
+    fmt::{self, Display},
+};
 
-use super::{Id, State};
+use super::{EmailKeyword, Id, State};
 
 #[derive(Debug, Deserialize)]
 #[serde(rename_all = "camelCase")]
@@ -70,11 +73,23 @@ impl<'de> Deserialize<'de> for ResponseInvocation {
                         seq.next_element::<MethodResponseSet<EmptySetUpdated>>()?
                             .ok_or(length_err)?,
                     )),
+                    "Email/import" => Ok(MethodResponse::EmailImport(
+                        seq.next_element::<MethodResponseEmailImport>()?
+                            .ok_or(length_err)?,
+                    )),
                     "Mailbox/get" => Ok(MethodResponse::MailboxGet(
                         seq.next_element::<MethodResponseGet<Mailbox>>()?
                             .ok_or(length_err)?,
                     )),
                     "Mailbox/set" => Ok(MethodResponse::MailboxSet(
+                        seq.next_element::<MethodResponseSet<GenericObjectWithId>>()?
+                            .ok_or(length_err)?,
+                    )),
+                    "Identity/get" => Ok(MethodResponse::IdentityGet(
+                        seq.next_element::<MethodResponseGetIdentity>()?
+                            .ok_or(length_err)?,
+                    )),
+                    "EmailSubmission/set" => Ok(MethodResponse::EmailSubmissionSet(
                         seq.next_element::<MethodResponseSet<GenericObjectWithId>>()?
                             .ok_or(length_err)?,
                     )),
@@ -89,8 +104,11 @@ impl<'de> Deserialize<'de> for ResponseInvocation {
                             "Email/query",
                             "Email/changes",
                             "Email/set",
+                            "Email/import",
                             "Mailbox/get",
                             "Mailbox/set",
+                            "Identity/get",
+                            "EmailSubmission/set",
                             "error",
                         ],
                     )),
@@ -128,7 +146,29 @@ pub struct MethodResponseGet<T> {
     /// This array contains the ids passed to the method for records that do not exist. The array is
     /// empty if all requested ids were found or if the ids argument passed in was either null or an
     /// empty array.
+    ///
+    /// NB: The spec does not specify this value can be `null`, but Fastmail's Cyrus can return
+    /// `null` here when invoking `Identity/get`. Associated issue:
+    ///
     pub not_found: Vec<Id>,
+}
+
+/// This is a `/get` method specific to `Identity/get`. We do not reuse `MethodResponseGet` here
+/// because Cyrus has a pair of bugs related to `Identity/get`.
+///
+/// - https://github.com/cyrusimap/cyrus-imapd/issues/2671
+/// - https://github.com/cyrusimap/cyrus-imapd/issues/4122
+#[derive(Debug, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct MethodResponseGetIdentity {
+    /// The id of the account used for the call.
+    pub account_id: Id,
+    /// An array of the `Identity` objects requested. This is the empty array if no objects were
+    /// found or if the ids argument passed in was also an empty array. The results MAY be in a
+    /// different order to the ids in the request arguments. If an identical id is included more
+    /// than once in the request, the server MUST only include it once in either the list or the
+    /// notFound argument of the response.
+    pub list: Vec<Identity>,
 }
 
 #[derive(Debug, Deserialize)]
@@ -232,6 +272,24 @@ pub struct MethodResponseSet<T> {
     pub not_destroyed: Option<HashMap<Id, MethodResponseError>>,
 }
 
+#[derive(Debug, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct MethodResponseEmailImport {
+    /// The id of the account used for the call.
+    pub account_id: Id,
+    /// The state string that would have been returned by `Email/get` before making the requested
+    /// changes, or `None` if the server doesn’t know what the previous state string was.
+    pub old_state: Option<State>,
+    /// The state string that will now be returned by `Email/get`.
+    pub new_state: Option<State>,
+    /// A map of the creation id to an object containing the "id" property for each successfully
+    /// imported `Email`, or `None` if none.
+    pub created: Option<HashMap<Id, GenericObjectWithId>>,
+    /// A map of the creation id to a SetError object for each `Email` that failed to be created, or
+    /// `None` if all successful.
+    pub not_created: Option<HashMap<Id, MethodResponseError>>,
+}
+
 /// Struct for updates in a call to `T/set` which we don't care about.
 #[derive(Debug, Deserialize)]
 pub struct EmptySetUpdated;
@@ -251,35 +309,6 @@ pub struct Email {
     pub blob_id: Id,
     pub keywords: HashMap<EmailKeyword, bool>,
     pub mailbox_ids: HashMap<Id, bool>,
-}
-
-/// Keywords that assign meaning to email.
-///
-/// Note that JMAP mandates that these be lowercase.
-///
-/// See <https://www.iana.org/assignments/imap-jmap-keywords/imap-jmap-keywords.xhtml>.
-#[derive(Clone, Copy, Eq, PartialEq, Hash, Debug, Deserialize)]
-pub enum EmailKeyword {
-    #[serde(rename = "$draft")]
-    Draft,
-    #[serde(rename = "$seen")]
-    Seen,
-    #[serde(rename = "$flagged")]
-    Flagged,
-    #[serde(rename = "$answered")]
-    Answered,
-    #[serde(rename = "$forwarded")]
-    Forwarded,
-    #[serde(rename = "$junk")]
-    Junk,
-    #[serde(rename = "$notjunk")]
-    NotJunk,
-    #[serde(rename = "$phishing")]
-    Phishing,
-    #[serde(rename = "$important")]
-    Important,
-    #[serde(other)]
-    Unknown,
 }
 
 #[derive(Debug, Deserialize)]
@@ -330,15 +359,32 @@ pub enum MailboxRole {
     Unknown,
 }
 
+#[derive(Debug, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct Identity {
+    /// The id of the `Identity`.
+    pub id: Id,
+    /// The "From" email address the client MUST use when creating a new Email from this `Identity`.
+    /// If the "mailbox" part of the address (the section before the "@") is the single character
+    /// "*" (e.g., "*@example.com"), the client may use any valid address ending in that domain
+    /// (e.g., "foo@example.com").
+    pub email: String,
+}
+
 #[derive(Debug)]
 pub enum MethodResponse {
     EmailGet(MethodResponseGet<Email>),
     EmailQuery(MethodResponseQuery),
     EmailChanges(MethodResponseChanges),
     EmailSet(MethodResponseSet<EmptySetUpdated>),
+    EmailImport(MethodResponseEmailImport),
 
     MailboxGet(MethodResponseGet<Mailbox>),
     MailboxSet(MethodResponseSet<GenericObjectWithId>),
+
+    IdentityGet(MethodResponseGetIdentity),
+
+    EmailSubmissionSet(MethodResponseSet<GenericObjectWithId>),
 
     Error(MethodResponseError),
 }
@@ -470,4 +516,34 @@ pub enum MethodResponseError {
     ForbiddenFrom,
     /// The user does not have permission to send at all right now.
     ForbiddenToSend { description: Option<String> },
+}
+
+impl Display for MethodResponseError {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        write!(f, "{:?}", self)
+    }
+}
+
+impl std::error::Error for MethodResponseError {
+    fn source(&self) -> Option<&(dyn std::error::Error + 'static)> {
+        None
+    }
+}
+
+/// Response from a blob upload.
+#[derive(Debug, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct BlobUploadResponse {
+    /// The id of the account used for the call.
+    pub account_id: Id,
+    /// The id representing the binary data uploaded. The data for this id is immutable. The id
+    /// *only* refers to the binary data, not any metadata.
+    pub blob_id: Id,
+    // The media type of the file (as specified in
+    // \[[RFC6838](https://datatracker.ietf.org/doc/html/rfc6838)\], Section 4.2) as set in the
+    // Content-Type header of the upload HTTP request.
+    #[serde(rename = "type")]
+    pub content_type: String,
+    /// The size of the file in octets.
+    pub size: u64,
 }

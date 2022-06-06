@@ -6,6 +6,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 ### Added
+- mujmap can now send emails! See the readme for details.
 - New configuration option `convert_dos_to_unix` which converts DOS newlines to
   Unix newlines for all newly downloaded mail files.
 - New configuration option `cache_dir` which changes the directory where mujmap

@@ -321,6 +321,12 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "e78d4f1cc4ae33bbfc157ed5d5a5ef3bc29227303d595861deb238fcec4e9457"
 
 [[package]]
+name = "email-parser"
+version = "0.5.0"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "fd45adbcbe4247e0a92f13ae66d10b11a6fc05f6184a8f573755afab21f18799"
+
+[[package]]
 name = "encode_unicode"
 version = "0.3.6"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -378,6 +384,12 @@ dependencies = [
  "matches",
  "percent-encoding",
 ]
+
+[[package]]
+name = "fqdn"
+version = "0.1.8"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "1e6d13224e56390ed1c582c513492b8b4acc7865034a7f4a2077e52585175ea8"
 
 [[package]]
 name = "from_variants"
@@ -774,7 +786,10 @@ dependencies = [
  "clap-verbosity-flag",
  "const_format",
  "directories",
+ "either",
+ "email-parser",
  "env_logger",
+ "fqdn",
  "fslock",
  "futures",
  "http",

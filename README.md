@@ -3,18 +3,16 @@
 mujmap is a tool to synchronize your [notmuch](https://notmuchmail.org/)
 database with a server supporting the [JMAP mail
 protocol](https://jmap.io/spec.html). Specifically, it downloads new messages
-and synchronizes notmuch tags with mailboxes and keywords both ways. It is very
-similar to [Lieer](https://github.com/gauteh/lieer) in terms of design and
-operation.
+and synchronizes notmuch tags with mailboxes and keywords both ways and can send
+emails via a sendmail-like interface. It is very similar to
+[Lieer](https://github.com/gauteh/lieer) in terms of design and operation.
 
 ## Disclaimer
-mujmap is in quite an early state and comes with no warranty. While I am using
-it myself for my email, and I have taken caution to insert an abundance of
-paranoia where permanent changes are concerned, I have only tested it on one
-provider ([Fastmail](https://fastmail.com)) and one OS (Linux) and I can't
-guarantee it won't completely explode your inbox and destroy all your most
-treasured kitten photos. Please use with caution for the time being.
-Contributions very welcome!
+mujmap is in quite an early state and comes with no warranty. I use it myself,
+it has been seeing steady adoption among other users, and I have taken caution
+to insert an abundance of paranoia where permanent changes are concerned. It is
+known to work on Linux and macOS with at least one webmail provider
+([Fastmail](https://fastmail.com)).
 
 **If you do decide to use mujmap**, please look at the list of open issues
 first. If you are installing the latest Cargo release instead of the latest git
@@ -39,7 +37,7 @@ cargo install --git https://github.com/elizagamedev/mujmap
 ```
 
 There is also an official [Nix
-package](https://github.com/NixOS/nixpkgs/blob/9306977ecb2a9ed771aeeafd48baf00432a49dd4/pkgs/applications/networking/mujmap/default.nix).
+package](https://github.com/NixOS/nixpkgs/blob/master/pkgs/applications/networking/mujmap/default.nix).
 A [home-manager module](https://github.com/nix-community/home-manager/pull/2960)
 is underway.
 
@@ -51,53 +49,15 @@ configurations.
 
 In the directory that you want to use as the maildir for a specific mujmap
 instance, place a mujmap.toml file
-([example](https://github.com/elizagamedev/mujmap/blob/main/mujmap.toml.example)). This
-directory *must* be a subdirectory of the notmuch root directory. Then, invoke
-mujmap from that directory, or from another directory pointing to it with the
-`-C` option. Check `mujmap --help` for more options.
+([example](https://github.com/elizagamedev/mujmap/blob/main/mujmap.toml.example)).
+This directory *must* be a subdirectory of the notmuch root directory. Then,
+invoke mujmap from that directory, or from another directory pointing to it with
+the `-C` option. Check `mujmap --help` for more options. Specific
 
-## Quirks
--   If you change any of the "tag" options in the config file *after* you
-    already have a working setup, be sure to heed the warning in the example
-    config file and follow the instructions!
--   No matter how old the change, any messages changed in the local database
-    in-between syncs will overwrite remote changes. This is due to an API
-    limitation, described in more detail in the [Behavior](#behavior) section.
--   Duplicate messages may behave strangely. See #13.
--   This software probably doesn't work on Windows. I have no evidence of this
-    being the case, it's just a hunch. Please prove me wrong.
-
-## Migrating from IMAP+notmuch
-
-Unfortunately, there is no straightforward way to migrate yet. The following is
-an (untested) method you can use, **ONLY after you make a backup of your notmuch
-database**, and **ONLY after you have verified that mujmap works correctly for
-your account in an independent instance of a notmuch database (see the notmuch
-manpages for information on how to do this)**:
-
-1.  Ensure you're fully synchronized with the IMAP server.
-2.  Add a maildir for mujmap as a sibling of your already-existing maildirs.
-    Configure it as you please, but don't invoke `mujmap sync` yet.
-3.  Create a file called `mujmap.state.json` in this directory alongside
-    `mujmap.toml` with the following contents:
-
-```json
-{"notmuch_revision":0}
-```
-4.  Run `mujmap --dry-run sync` here. This will not actually make any changes to
-    your maildir, but will allow you to verify your config and download email
-    into a cache.
-5.  Run `mujmap sync` here to sync your mail for real. This will the downloaded
-    email to the mujmap maildir and add them to your notmuch database. Because
-    these messages should be duplicates of your existing messages, they will
-    inherit the duplicates' tags, and then push them back to the server.
-5.  Remove your old IMAP maildirs and run `notmuch new --no-hooks`. If
-    everything went smoothly, notmuch shouldn't mention any files being removed
-    in its output.
-
-## Behavior
-TL;DR: mujmap downloads new mail files, merges changes locally, preferring local
-changes in the event of a conflict, and then pushes changes to the remote.
+### Syncing
+Use `mujmap sync` to synchronize your mail. TL;DR: mujmap downloads new mail
+files, merges changes locally, preferring local changes in the event of a
+conflict, and then pushes changes to the remote.
 
 mujmap operates in roughly these steps:
 
@@ -140,6 +100,59 @@ the slightly out-of-date and not completely-accurately-implemented-as-written
 [DESIGN.org](https://github.com/elizagamedev/mujmap/blob/main/DESIGN.org) file
 goes into more detail.
 
+### Sending
+Use `mujmap send` to send an email. This subcommand is designed to operate
+mostly like `sendmail`; i.e., it reads an
+[RFC5322](https://datatracker.ietf.org/doc/html/rfc5322) mail file from stdin
+and sends it off into cyberspace. That said, this interface is still
+experimental and support/compatibility for all of `sendmail`'s various CLI
+options is nonexistent, and when implemented, will likely be extremely limited
+in scope.
+
+#### Emacs configuration
+```elisp
+(setq sendmail-program "mujmap"
+      message-sendmail-extra-arguments '("-C" "/path/to/mujmap/maildir" "send"))
+```
+
+## Quirks
+-   If you change any of the "tag" options in the config file *after* you
+    already have a working setup, be sure to heed the warning in the example
+    config file and follow the instructions!
+-   No matter how old the change, any messages changed in the local database
+    in-between syncs will overwrite remote changes. This is due to an API
+    limitation, described in more detail in the [Behavior](#behavior) section.
+-   Duplicate messages may behave strangely. See #13.
+-   This software probably doesn't work on Windows. I have no evidence of this
+    being the case, it's just a hunch. Please prove me wrong.
+
+## Migrating from IMAP+notmuch
+Unfortunately, there is no straightforward way to migrate yet. The following is
+an (untested) method you can use, **ONLY after you make a backup of your notmuch
+database**, and **ONLY after you have verified that mujmap works correctly for
+your account in an independent instance of a notmuch database (see the notmuch
+manpages for information on how to do this)**:
+
+1.  Ensure you're fully synchronized with the IMAP server.
+2.  Add a maildir for mujmap as a sibling of your already-existing maildirs.
+    Configure it as you please, but don't invoke `mujmap sync` yet.
+3.  Create a file called `mujmap.state.json` in this directory alongside
+    `mujmap.toml` with the following contents:
+
+```json
+{"notmuch_revision":0}
+```
+4.  Run `mujmap --dry-run sync` here. This will not actually make any changes to
+    your maildir, but will allow you to verify your config and download email
+    into a cache.
+5.  Run `mujmap sync` here to sync your mail for real. This will the downloaded
+    email to the mujmap maildir and add them to your notmuch database. Because
+    these messages should be duplicates of your existing messages, they will
+    inherit the duplicates' tags, and then push them back to the server.
+5.  Remove your old IMAP maildirs and run `notmuch new --no-hooks`. If
+    everything went smoothly, notmuch shouldn't mention any files being removed
+    in its output.
+
 ## Limitations
 mujmap cannot and will never be able to:
 
@@ -148,7 +161,6 @@ mujmap cannot and will never be able to:
 -   Delete messages (other than tagging them as `deleted` or `spam`)
 
 ## Troubleshooting
-
 ### Status Code 401 (Unauthorized)
 - [ ] Ensure that your mail server supports HTTP Basic Auth. *Fastmail does.* See #5.
 - [ ] Verify that you are using the correct username and password. Fastmail

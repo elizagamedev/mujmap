@@ -26,3 +26,32 @@ impl fmt::Display for State {
         self.0.fmt(f)
     }
 }
+
+/// Keywords that assign meaning to email.
+///
+/// Note that JMAP mandates that these be lowercase.
+///
+/// See <https://www.iana.org/assignments/imap-jmap-keywords/imap-jmap-keywords.xhtml>.
+#[derive(Clone, Copy, Eq, PartialEq, Hash, Debug, Serialize, Deserialize)]
+pub enum EmailKeyword {
+    #[serde(rename = "$draft")]
+    Draft,
+    #[serde(rename = "$seen")]
+    Seen,
+    #[serde(rename = "$flagged")]
+    Flagged,
+    #[serde(rename = "$answered")]
+    Answered,
+    #[serde(rename = "$forwarded")]
+    Forwarded,
+    #[serde(rename = "$junk")]
+    Junk,
+    #[serde(rename = "$notjunk")]
+    NotJunk,
+    #[serde(rename = "$phishing")]
+    Phishing,
+    #[serde(rename = "$important")]
+    Important,
+    #[serde(other)]
+    Unknown,
+}

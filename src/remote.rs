@@ -6,10 +6,11 @@ use std::{
 
 use crate::{
     config::{self, Config},
-    jmap::{self, Id, MailboxRole, State, EmailKeyword},
+    jmap::{self, EmailKeyword, Id, MailboxRole, State},
     local,
 };
 use itertools::Itertools;
+use lazy_static::lazy_static;
 use log::{debug, log_enabled, trace, warn};
 use serde::{de::DeserializeOwned, Serialize};
 use serde_json::Value;
@@ -80,6 +81,18 @@ pub enum Error {
     UpdateEmail {
         not_updated: HashMap<jmap::Id, jmap::MethodResponseError>,
     },
+
+    #[snafu(display("Failed to import email: {}", source))]
+    ImportEmail { source: jmap::MethodResponseError },
+
+    #[snafu(display("Failed to destroy email: {}", source))]
+    DestroyEmail { source: jmap::MethodResponseError },
+
+    #[snafu(display("Failed to create email submission: {}", source))]
+    CreateEmailSubmission { source: jmap::MethodResponseError },
+
+    #[snafu(display("Failed to update submitted email: {}", source))]
+    UpdateSubmittedEmail { source: jmap::MethodResponseError },
 }
 
 pub type Result<T, E = Error> = std::result::Result<T, E>;
@@ -137,7 +150,23 @@ impl HttpWrapper {
             .take(10_000_000))
     }
 
-    fn post<S: Serialize, D: DeserializeOwned>(&self, url: &str, body: S) -> Result<D> {
+    fn post_string<D: DeserializeOwned>(&self, url: &str, body: &str) -> Result<D> {
+        let post = self
+            .agent
+            .post(url)
+            .set("Authorization", &self.authorization)
+            .send_string(body)
+            .context(RequestSnafu {})?;
+        if log_enabled!(log::Level::Trace) {
+            let json = post.into_string().context(ResponseSnafu {})?;
+            trace!("Post response: {json}");
+            serde_json::from_str(&json).context(DeserializeResponseSnafu {})
+        } else {
+            post.into_json().context(ResponseSnafu {})
+        }
+    }
+
+    fn post_json<S: Serialize, D: DeserializeOwned>(&self, url: &str, body: S) -> Result<D> {
         let post = self
             .agent
             .post(url)
@@ -166,19 +195,22 @@ impl Remote {
     pub fn open(config: &Config) -> Result<Self> {
         let password = config.password().context(GetPasswordSnafu {})?;
         match (&config.fqdn, &config.session_url) {
-            (Some(fqdn),_) => {
+            (Some(fqdn), _) => {
                 Self::open_host(&fqdn, config.username.as_str(), &password, config.timeout)
-            },
-            (_,Some(session_url)) => Remote::open_url(
+            }
+            (_, Some(session_url)) => Remote::open_url(
                 &session_url.as_str(),
                 config.username.as_str(),
                 &password,
                 config.timeout,
             ),
             _ => {
-                let (_,domain) = config.username.split_once('@').context(NoDomainNameSnafu {})?;
+                let (_, domain) = config
+                    .username
+                    .split_once('@')
+                    .context(NoDomainNameSnafu {})?;
                 Self::open_host(domain, config.username.as_str(), &password, config.timeout)
-            },
+            }
         }
     }
 
@@ -461,7 +493,10 @@ impl Remote {
                 expect_email_get(GET_METHOD_ID, response.method_responses.remove(0))?;
 
             for email in get_response.list {
-                emails.insert(email.id.clone(), Email::from_jmap_email(email, mailboxes, tags_config));
+                emails.insert(
+                    email.id.clone(),
+                    Email::from_jmap_email(email, mailboxes, tags_config),
+                );
             }
         }
         Ok(emails)
@@ -515,11 +550,12 @@ impl Remote {
         for mailbox in jmap_mailboxes.values() {
             if let Some(role) = mailbox.role {
                 match role {
-                    MailboxRole::Drafts => roles.draft = true,
-                    MailboxRole::Flagged => roles.flagged = true,
-                    MailboxRole::Important => roles.important = true,
-                    MailboxRole::Junk => roles.spam = true,
-                    MailboxRole::Trash => roles.deleted = true,
+                    MailboxRole::Drafts => roles.draft = Some(mailbox.id.clone()),
+                    MailboxRole::Flagged => roles.flagged = Some(mailbox.id.clone()),
+                    MailboxRole::Important => roles.important = Some(mailbox.id.clone()),
+                    MailboxRole::Junk => roles.spam = Some(mailbox.id.clone()),
+                    MailboxRole::Trash => roles.deleted = Some(mailbox.id.clone()),
+                    MailboxRole::Sent => roles.sent = Some(mailbox.id.clone()),
                     _ => {}
                 }
             }
@@ -772,6 +808,35 @@ impl Remote {
         Ok(())
     }
 
+    /// Return all `jmap::Identity` objects from the server.
+    pub fn get_identities<'a>(&mut self) -> Result<Vec<jmap::Identity>> {
+        const GET_METHOD_ID: &str = "0";
+
+        let account_id = &self.session.primary_accounts.mail;
+        let mut response = self.request(jmap::Request {
+            using: &[jmap::CapabilityKind::Submission],
+            method_calls: &[jmap::RequestInvocation {
+                call: jmap::MethodCall::IdentityGet {
+                    get: jmap::MethodCallGet {
+                        account_id,
+                        ids: None,
+                        properties: Some(&["id", "email"]),
+                    },
+                },
+                id: GET_METHOD_ID,
+            }],
+            created_ids: None,
+        })?;
+        self.update_session_state(&response.session_state)?;
+
+        if response.method_responses.len() != 1 {
+            return Err(Error::UnexpectedResponse);
+        }
+
+        let get_response = expect_identity_get(GET_METHOD_ID, response.method_responses.remove(0))?;
+        Ok(get_response.list)
+    }
+
     pub fn read_email_blob(&self, id: &Id) -> Result<impl Read + Send> {
         let uri = UriTemplate::new(self.session.download_url.as_str())
             .set("accountId", self.session.primary_accounts.mail.0.as_str())
@@ -815,12 +880,27 @@ impl Remote {
                 };
 
                 // Keywords.
-                patch.insert("keywords/$draft", as_value(local_email.tags.contains("draft")));
-                patch.insert("keywords/$seen", as_value(!local_email.tags.contains("unread")));
-                patch.insert("keywords/$flagged", as_value(local_email.tags.contains("flagged")));
-                patch.insert("keywords/$answered", as_value(local_email.tags.contains("replied")));
-                patch.insert("keywords/$forwarded", as_value(local_email.tags.contains("passed")));
-                if !mailboxes.roles.spam && !tags_config.spam.is_empty() {
+                patch.insert(
+                    "keywords/$draft",
+                    as_value(local_email.tags.contains("draft")),
+                );
+                patch.insert(
+                    "keywords/$seen",
+                    as_value(!local_email.tags.contains("unread")),
+                );
+                patch.insert(
+                    "keywords/$flagged",
+                    as_value(local_email.tags.contains("flagged")),
+                );
+                patch.insert(
+                    "keywords/$answered",
+                    as_value(local_email.tags.contains("replied")),
+                );
+                patch.insert(
+                    "keywords/$forwarded",
+                    as_value(local_email.tags.contains("passed")),
+                );
+                if mailboxes.roles.spam.is_none() && !tags_config.spam.is_empty() {
                     let spam = local_email.tags.contains(&tags_config.spam);
                     patch.insert("keywords/$junk", as_value(spam));
                     patch.insert("keywords/$notjunk", as_value(!spam));
@@ -898,8 +978,200 @@ impl Remote {
         Ok(())
     }
 
+    /// Send an email with the given body.
+    pub fn send_email(
+        &mut self,
+        identity_id: jmap::Id,
+        mailboxes: &Mailboxes,
+        from_address: &str,
+        to_addresses: &HashSet<String>,
+        email: &str,
+    ) -> Result<()> {
+        const IMPORT_EMAIL_METHOD_ID: &str = "0";
+        const SET_EMAIL_SUBMISSION_METHOD_ID: &str = "1";
+        lazy_static! {
+            static ref EMAIL_CLIENT_ID: jmap::Id = jmap::Id("0".into());
+            static ref EMAIL_CLIENT_ID_REF: jmap::Id = jmap::Id("#0".into());
+            static ref EMAIL_SUBMISSION_CLIENT_ID: jmap::Id = jmap::Id("1".into());
+            static ref EMAIL_SUBMISSION_CLIENT_ID_REF: jmap::Id = jmap::Id("#1".into());
+        }
+
+        let blob_id = self.upload_blob(email)?.blob_id;
+
+        let draft_mailbox_id = mailboxes
+            .roles
+            .draft
+            .as_ref()
+            .unwrap_or(&mailboxes.archive_id);
+        let sent_mailbox_id = mailboxes
+            .roles
+            .sent
+            .as_ref()
+            .unwrap_or(&mailboxes.archive_id);
+
+        let draft_mailbox_patch = format!("mailboxIds/{}", draft_mailbox_id.0);
+        let sent_mailbox_patch = format!("mailboxIds/{}", sent_mailbox_id.0);
+
+        // TODO: Set $answered and $forwarded properties here?
+        let mut on_success_update_email = HashMap::from([("keywords/$draft", Value::Null)]);
+        if draft_mailbox_id != sent_mailbox_id {
+            on_success_update_email.insert(&draft_mailbox_patch, Value::Null);
+            on_success_update_email.insert(&sent_mailbox_patch, Value::Bool(true));
+        }
+
+        let account_id = &self.session.primary_accounts.mail;
+        let rcpt_to: Vec<_> = to_addresses
+            .iter()
+            .map(|x| jmap::Address { email: x.as_str() })
+            .collect();
+        let mut response = self.request(jmap::Request {
+            using: &[jmap::CapabilityKind::Mail, jmap::CapabilityKind::Submission],
+            method_calls: &[
+                jmap::RequestInvocation {
+                    call: jmap::MethodCall::EmailImport {
+                        account_id,
+                        emails: HashMap::from([(
+                            &*EMAIL_CLIENT_ID,
+                            jmap::EmailImport {
+                                blob_id,
+                                mailbox_ids: HashMap::from([(draft_mailbox_id, true)]),
+                                keywords: HashMap::from([
+                                    (EmailKeyword::Draft, true),
+                                    (EmailKeyword::Seen, true),
+                                ]),
+                            },
+                        )]),
+                    },
+                    id: IMPORT_EMAIL_METHOD_ID,
+                },
+                jmap::RequestInvocation {
+                    call: jmap::MethodCall::EmailSubmissionSet {
+                        set: jmap::MethodCallSet {
+                            account_id,
+                            if_in_state: None,
+                            create: Some(HashMap::from([(
+                                &*EMAIL_SUBMISSION_CLIENT_ID,
+                                &jmap::EmailSubmissionCreate {
+                                    identity_id: &identity_id,
+                                    email_id: &*EMAIL_CLIENT_ID_REF,
+                                    envelope: jmap::Envelope {
+                                        mail_from: jmap::Address {
+                                            email: from_address,
+                                        },
+                                        rcpt_to: &rcpt_to,
+                                    },
+                                },
+                            )])),
+                            update: None,
+                            destroy: None,
+                        },
+                        on_success_update_email: Some(HashMap::from([(
+                            &*EMAIL_SUBMISSION_CLIENT_ID_REF,
+                            on_success_update_email,
+                        )])),
+                    },
+                    id: SET_EMAIL_SUBMISSION_METHOD_ID,
+                },
+            ],
+            created_ids: None,
+        })?;
+        self.update_session_state(&response.session_state)?;
+
+        // Pop the responses off one at a time so that we process errors in order in case of a
+        // partial success.
+
+        // Verify that the email was created and get its ID.
+        if response.method_responses.is_empty() {
+            return Err(Error::UnexpectedResponse);
+        }
+        let import_response =
+            expect_email_import(IMPORT_EMAIL_METHOD_ID, response.method_responses.remove(0))?;
+        map_first_method_error_into_result(import_response.not_created)
+            .context(ImportEmailSnafu {})?;
+        let imported_email_id = import_response
+            .created
+            .and_then(|x| x.into_iter().map(|(_, object)| object.id).next())
+            .context(UnexpectedResponseSnafu {})?;
+
+        // Verify that the rest of the submission succeeded. If it doesn't, we destroy the draft we
+        // just uploaded.
+        let mut verify_submission = || -> Result<()> {
+            if response.method_responses.is_empty() {
+                return Err(Error::UnexpectedResponse);
+            }
+            let set_email_submission_response = expect_email_submission_set(
+                SET_EMAIL_SUBMISSION_METHOD_ID,
+                response.method_responses.remove(0),
+            )?;
+            map_first_method_error_into_result(set_email_submission_response.not_created)
+                .context(CreateEmailSubmissionSnafu {})?;
+
+            if response.method_responses.is_empty() {
+                return Err(Error::UnexpectedResponse);
+            }
+            let set_email_response = expect_email_set(
+                SET_EMAIL_SUBMISSION_METHOD_ID,
+                response.method_responses.remove(0),
+            )?;
+            map_first_method_error_into_result(set_email_response.not_created)
+                .context(UpdateSubmittedEmailSnafu {})?;
+
+            Ok(())
+        };
+
+        if let Err(e) = verify_submission() {
+            // Delete the email we created and fail as normal.
+            if let Err(e) = self.destroy_email(&imported_email_id) {
+                warn!("Could not destroy draft: {e}");
+            }
+            return Err(e);
+        };
+        Ok(())
+    }
+
+    fn destroy_email(&mut self, id: &jmap::Id) -> Result<()> {
+        const SET_METHOD_ID: &str = "0";
+
+        let account_id = &self.session.primary_accounts.mail;
+        let mut response = self.request(jmap::Request {
+            using: &[jmap::CapabilityKind::Mail],
+            method_calls: &[jmap::RequestInvocation {
+                call: jmap::MethodCall::EmailSet {
+                    set: jmap::MethodCallSet {
+                        account_id,
+                        if_in_state: None,
+                        create: None,
+                        update: None,
+                        destroy: Some(&[id]),
+                    },
+                },
+                id: SET_METHOD_ID,
+            }],
+            created_ids: None,
+        })?;
+        self.update_session_state(&response.session_state)?;
+
+        if response.method_responses.len() != 1 {
+            return Err(Error::UnexpectedResponse);
+        }
+
+        let set_response = expect_email_set(SET_METHOD_ID, response.method_responses.remove(0))?;
+        map_first_method_error_into_result(set_response.not_destroyed)
+            .context(DestroyEmailSnafu {})?;
+
+        Ok(())
+    }
+
+    fn upload_blob(&self, body: &str) -> Result<jmap::BlobUploadResponse> {
+        let uri = UriTemplate::new(self.session.upload_url.as_str())
+            .set("accountId", self.session.primary_accounts.mail.0.as_str())
+            .build();
+
+        self.http_wrapper.post_string(&uri, body)
+    }
+
     fn request<'a>(&self, request: jmap::Request<'a>) -> Result<jmap::Response> {
-        self.http_wrapper.post(&self.session.api_url, request)
+        self.http_wrapper.post_json(&self.session.api_url, request)
     }
 
     fn update_session_state(&mut self, session_state: &State) -> Result<()> {
@@ -943,11 +1215,12 @@ pub struct Mailboxes {
 /// Enumerates the special mailboxes that are available for this particular server.
 #[derive(Debug, Default)]
 pub struct AvailableMailboxRoles {
-    pub deleted: bool,
-    pub draft: bool,
-    pub flagged: bool,
-    pub important: bool,
-    pub spam: bool,
+    pub deleted: Option<Id>,
+    pub draft: Option<Id>,
+    pub flagged: Option<Id>,
+    pub important: Option<Id>,
+    pub spam: Option<Id>,
+    pub sent: Option<Id>,
 }
 
 /// An object which contains only the properties of a remote Email that mujmap cares about.
@@ -1005,14 +1278,14 @@ impl Email {
             if let Some(tag) = match keyword {
                 EmailKeyword::Answered => Some("replied"),
                 EmailKeyword::Draft => {
-                    if mailboxes.roles.draft {
+                    if mailboxes.roles.draft.is_some() {
                         None
                     } else {
                         Some("draft")
                     }
                 }
                 EmailKeyword::Flagged => {
-                    if mailboxes.roles.flagged {
+                    if mailboxes.roles.flagged.is_some() {
                         None
                     } else {
                         Some("flagged")
@@ -1020,7 +1293,7 @@ impl Email {
                 }
                 EmailKeyword::Forwarded => Some("passed"),
                 EmailKeyword::Important => {
-                    if mailboxes.roles.important {
+                    if mailboxes.roles.important.is_some() {
                         None
                     } else {
                         none_if_empty(&tags_config.important)
@@ -1035,7 +1308,7 @@ impl Email {
         if !keywords.contains(&EmailKeyword::Seen) {
             tags.insert("unread".to_string());
         }
-        if !mailboxes.roles.spam
+        if mailboxes.roles.spam.is_none()
             && !tags_config.spam.is_empty()
             && keywords.contains(&EmailKeyword::Junk)
             && !keywords.contains(&EmailKeyword::NotJunk)
@@ -1109,6 +1382,20 @@ fn expect_email_set(
     }
 }
 
+fn expect_email_import(
+    id: &str,
+    invocation: jmap::ResponseInvocation,
+) -> Result<jmap::MethodResponseEmailImport> {
+    if invocation.id != id {
+        return Err(Error::UnexpectedResponse);
+    }
+    match invocation.call {
+        jmap::MethodResponse::EmailImport(import) => Ok(import),
+        jmap::MethodResponse::Error(error) => Err(Error::MethodError { error }),
+        _ => Err(Error::UnexpectedResponse),
+    }
+}
+
 fn expect_mailbox_get(
     id: &str,
     invocation: jmap::ResponseInvocation,
@@ -1135,4 +1422,40 @@ fn expect_mailbox_set(
         jmap::MethodResponse::Error(error) => Err(Error::MethodError { error }),
         _ => Err(Error::UnexpectedResponse),
     }
+}
+
+fn expect_email_submission_set(
+    id: &str,
+    invocation: jmap::ResponseInvocation,
+) -> Result<jmap::MethodResponseSet<jmap::GenericObjectWithId>> {
+    if invocation.id != id {
+        return Err(Error::UnexpectedResponse);
+    }
+    match invocation.call {
+        jmap::MethodResponse::EmailSubmissionSet(set) => Ok(set),
+        jmap::MethodResponse::Error(error) => Err(Error::MethodError { error }),
+        _ => Err(Error::UnexpectedResponse),
+    }
+}
+
+fn expect_identity_get(
+    id: &str,
+    invocation: jmap::ResponseInvocation,
+) -> Result<jmap::MethodResponseGetIdentity> {
+    if invocation.id != id {
+        return Err(Error::UnexpectedResponse);
+    }
+    match invocation.call {
+        jmap::MethodResponse::IdentityGet(get) => Ok(get),
+        jmap::MethodResponse::Error(error) => Err(Error::MethodError { error }),
+        _ => Err(Error::UnexpectedResponse),
+    }
+}
+
+fn map_first_method_error_into_result(
+    errors: Option<HashMap<Id, jmap::MethodResponseError>>,
+) -> Result<(), jmap::MethodResponseError> {
+    errors
+        .and_then(|map| map.into_iter().next())
+        .map_or(Ok(()), |(_, e)| Err(e))
 }
