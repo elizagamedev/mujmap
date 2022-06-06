@@ -163,9 +163,8 @@ manpages for information on how to do this)**:
 ## Limitations
 mujmap cannot and will never be able to:
 
--   Upload new messages
--   Modify message contents
--   Delete messages (other than tagging them as `deleted` or `spam`)
+-   Modify message contents.
+-   Delete messages (other than tagging them as `deleted` or `spam`).
 
 ## Troubleshooting
 ### Status Code 401 (Unauthorized)
