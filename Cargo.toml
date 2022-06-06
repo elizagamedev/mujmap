@@ -31,7 +31,7 @@ itertools = "0.10.3"
 lazy_static = "1.4.0"
 loe = "0.3.0"
 log = "0.4.16"
-notmuch = { git = "https://github.com/vhdirk/notmuch-rs" }
+notmuch = "0.8.0"
 rayon = "1.5.2"
 regex = "1.5.5"
 serde = { version = "1.0.136", features = ["derive"] }
