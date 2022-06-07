@@ -299,11 +299,16 @@ pub fn sync(
             Some(local_email) => local_email.blob_id != remote_email.blob_id,
             None => true,
         })
-        .map(|remote_email| (remote_email.id.clone(), NewEmail {
-            remote_email,
-            cache_path: cache.cache_path(&remote_email.id, &remote_email.blob_id),
-            maildir_path: local.new_maildir_path(&remote_email.id, &remote_email.blob_id),
-        }))
+        .map(|remote_email| {
+            (
+                remote_email.id.clone(),
+                NewEmail {
+                    remote_email,
+                    cache_path: cache.cache_path(&remote_email.id, &remote_email.blob_id),
+                    maildir_path: local.new_maildir_path(&remote_email.id, &remote_email.blob_id),
+                },
+            )
+        })
         .collect();
 
     let new_emails_missing_from_cache: Vec<&NewEmail> = new_emails
@@ -472,7 +477,8 @@ pub fn sync(
                 })?;
 
                 // Add mailbox tags
-                let mut tags: HashSet<&str> = remote_email.tags.iter().map(|s| s.as_str()).collect();
+                let mut tags: HashSet<&str> =
+                    remote_email.tags.iter().map(|s| s.as_str()).collect();
                 for id in &remote_email.mailbox_ids {
                     if let Some(mailbox) = mailboxes.mailboxes_by_id.get(id) {
                         tags.insert(&mailbox.tag);
@@ -493,24 +499,30 @@ pub fn sync(
                 // always be a substring of notmuch's version (same name with flags attached), so a
                 // starts-with test is enough.
                 if let Some(mut new_email) = new_emails.get_mut(&remote_email.id) {
-                    if let Some(our_filename) = new_email.maildir_path.file_name().map(|p| p.to_string_lossy()) {
-                        if let Some(message) =
-                            local
-                                .get_message(&local_email.message_id)
-                                .context(GetNotmuchMessageSnafu {})? {
-
+                    if let Some(our_filename) = new_email
+                        .maildir_path
+                        .file_name()
+                        .map(|p| p.to_string_lossy())
+                    {
+                        if let Some(message) = local
+                            .get_message(&local_email.message_id)
+                            .context(GetNotmuchMessageSnafu {})?
+                        {
                             if let Some(new_maildir_path) = message
                                 .filenames()
                                 .into_iter()
-                                .filter(|f| f.file_name().map_or(false, |p| p.to_string_lossy().starts_with(&*our_filename)))
-                                .next() {
-
+                                .filter(|f| {
+                                    f.file_name().map_or(false, |p| {
+                                        p.to_string_lossy().starts_with(&*our_filename)
+                                    })
+                                })
+                                .next()
+                            {
                                 new_email.maildir_path = new_maildir_path;
                             }
                         }
                     }
                 }
-
             }
 
             // Finally, remove the old messages from the database.
