@@ -691,13 +691,29 @@ synchronization was performed.
                 if atty::is(Stream::Stdout) {
                     println!(
                         "\
-Would you like to potentially discard edits to the notmuch database and replace
-them with the JMAP server's changes? This will not affect any notmuch messages
-not managed by mujmap or other maildirs managed by mujmap.
+If you continue, any potential changes made to your database since your last
+sync will not be pushed to the JMAP server, and some may be overwritten by the
+JMAP server's state. Depending on your situation, this has potential to create
+inconsistencies between the state of your database and the state of the server.
 
-Alternatively, you may cancel and attempt to resolve this manually by adding a
-`notmuch_revision' to a specific notmuch database revision number in the
-`mujmap.state.json' file.
+If this is the first time you are synchronizing mujmap in a pre-existing
+database, this is not an issue. If the mail files in your database are different
+from your mail on the JMAP server, you can proceed and mujmap will perform the
+initial setup with no issues. This would be the case if you had multiple email
+accounts in the same database, for example.
+
+If this is the first time you are synchronizing, and you are attempting to
+migrate your existing notmuch database tags to mailboxes on a JMAP server,
+DO NOT continue. Instead, follow the relevant instructions in mujmap's README.
+
+If this is the first time you are synchronizing, but you do not care about your
+notmuch tags and would like them to be replaced with the JMAP server's state,
+you may continue.
+
+If this is NOT the first time you are synchronizing, you should quit and force
+a full sync by deleting the `mujmap.state.json' file and invoking mujmap again.
+This will overwrite all of your local JMAP state with the JMAP server's state.
+You will encounter this message again, but at that point you can safely proceed.
 
 Continue? (y/N)
 "
