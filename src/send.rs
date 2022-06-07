@@ -4,7 +4,6 @@ use log::{debug, warn};
 use snafu::prelude::*;
 use std::{
     collections::HashSet,
-    fmt::{self, Display},
     io::{Cursor, Read},
     iter,
     str::FromStr,
@@ -16,21 +15,6 @@ use crate::{
     jmap,
     remote::{self, Remote},
 };
-
-#[derive(Debug)]
-pub struct FqdnErrorWrapper(fqdn::Error);
-
-impl Display for FqdnErrorWrapper {
-    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-        write!(f, "{:?}", self.0)
-    }
-}
-
-impl std::error::Error for FqdnErrorWrapper {
-    fn source(&self) -> Option<&(dyn std::error::Error + 'static)> {
-        None
-    }
-}
 
 #[derive(Debug, Snafu)]
 pub enum Error {
@@ -44,10 +28,7 @@ pub enum Error {
     ParseEmail { source: email_parser::error::Error },
 
     #[snafu(display("Could not parse sender domain: {}", source))]
-    ParseSenderDomain {
-        domain: String,
-        source: FqdnErrorWrapper,
-    },
+    ParseSenderDomain { domain: String, source: fqdn::Error },
 
     #[snafu(display("Could not open remote session: {}", source))]
     OpenRemote { source: remote::Error },
@@ -59,10 +40,7 @@ pub enum Error {
     InvalidEmailAddress { address: String },
 
     #[snafu(display("Could not parse JMAP identity domain `{}': {}", domain, source))]
-    ParseIdentityDomain {
-        domain: String,
-        source: FqdnErrorWrapper,
-    },
+    ParseIdentityDomain { domain: String, source: fqdn::Error },
 
     #[snafu(display("No JMAP identities match sender `{}'", sender))]
     NoIdentitiesForSender { sender: String },
@@ -164,11 +142,9 @@ fn get_identity_id_for_sender_address(
 ) -> Result<jmap::Id> {
     let sender_local_part = &sender_address.local_part;
     let sender_domain = &sender_address.domain;
-    let sender_fqdn = FQDN::from_str(sender_domain.as_ref())
-        .map_err(|e| FqdnErrorWrapper(e))
-        .context(ParseSenderDomainSnafu {
-            domain: sender_domain.as_ref(),
-        })?;
+    let sender_fqdn = FQDN::from_str(sender_domain.as_ref()).context(ParseSenderDomainSnafu {
+        domain: sender_domain.as_ref(),
+    })?;
     debug!(
         "Sender is `{}@{}', fqdn `{}'",
         sender_local_part, sender_domain, sender_fqdn
@@ -186,9 +162,7 @@ fn get_identity_id_for_sender_address(
                     .context(InvalidEmailAddressSnafu {
                         address: &identity.email,
                     })?;
-            let fqdn = FQDN::from_str(domain)
-                .map_err(|e| FqdnErrorWrapper(e))
-                .context(ParseIdentityDomainSnafu { domain })?;
+            let fqdn = FQDN::from_str(domain).context(ParseIdentityDomainSnafu { domain })?;
             Ok((identity, local_part, fqdn))
         })
         .collect::<Result<Vec<_>>>()?
