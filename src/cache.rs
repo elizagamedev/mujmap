@@ -54,7 +54,7 @@ pub struct Cache {
 impl Cache {
     /// Open the local store.
     ///
-    /// `mail_dir` *must* be a subdirectory of the notmuch path.
+    /// `mail_cur_dir` *must* be a subdirectory of the notmuch root maildir.
     pub fn open(mail_cur_dir: impl AsRef<Path>, config: &Config) -> Result<Self> {
         let project_dirs = ProjectDirs::from("sh.eliza", "", "mujmap").unwrap();
         let default_cache_dir = project_dirs.cache_dir();
