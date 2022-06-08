@@ -20,6 +20,9 @@ use termcolor::{ColorSpec, StandardStream, WriteColor};
 
 #[derive(Debug, Snafu)]
 pub enum Error {
+    #[snafu(display("Could not canonicalize given path: {}", source))]
+    Canonicalize { source: io::Error },
+
     #[snafu(display("Could not open lock file `{}': {}", path.to_string_lossy(), source))]
     OpenLockFile { path: PathBuf, source: io::Error },
 
@@ -199,12 +202,19 @@ impl LatestState {
 pub fn sync(
     stdout: &mut StandardStream,
     info_color_spec: ColorSpec,
-    mail_dir: PathBuf,
     args: Args,
     config: Config,
 ) -> Result<(), Error> {
+    let state_dir = match &config.state_dir {
+        Some(ref dir) => dir,
+        _ => todo!(),
+    }
+    .canonicalize()
+    .context(CanonicalizeSnafu {})?;
+    debug!("state dir: {}", state_dir.to_string_lossy());
+
     // Grab lock.
-    let lock_file_path = mail_dir.join("mujmap.lock");
+    let lock_file_path = state_dir.join("mujmap.lock");
     let mut lock = LockFile::open(&lock_file_path).context(OpenLockFileSnafu {
         path: lock_file_path,
     })?;
@@ -215,14 +225,14 @@ pub fn sync(
     }
 
     // Load the intermediary state.
-    let latest_state_filename = mail_dir.join("mujmap.state.json");
+    let latest_state_filename = state_dir.join("mujmap.state.json");
     let latest_state = LatestState::open(&latest_state_filename).unwrap_or_else(|e| {
         warn!("{e}");
         LatestState::empty()
     });
 
     // Open the local notmuch database.
-    let local = Local::open(mail_dir, args.dry_run).context(OpenLocalSnafu {})?;
+    let local = Local::open(&config, args.dry_run).context(OpenLocalSnafu {})?;
 
     // Open the local cache.
     let cache = Cache::open(&local.mail_cur_dir, &config).context(OpenCacheSnafu {})?;

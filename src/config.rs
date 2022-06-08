@@ -2,7 +2,7 @@ use serde::Deserialize;
 use snafu::prelude::*;
 use std::{
     fs, io,
-    path::{Path, PathBuf},
+    path::PathBuf,
     process::{Command, ExitStatus},
     string::FromUtf8Error,
 };
@@ -11,6 +11,9 @@ use snafu::Snafu;
 
 #[derive(Debug, Snafu)]
 pub enum Error {
+    #[snafu(display("Could not canonicalize config dir path: {}", source))]
+    Canonicalize { source: io::Error },
+
     #[snafu(display("Could not read config file `{}': {}", filename.to_string_lossy(), source))]
     ReadConfigFile {
         filename: PathBuf,
@@ -90,6 +93,18 @@ pub struct Config {
     /// default is operating-system specific.
     #[serde(default = "Default::default")]
     pub cache_dir: Option<PathBuf>,
+
+    /// The location of the mail dir, where downloaded email is finally stored. If not given,
+    /// mujmap will try to figure out what you want. You probably don't want to set this.
+    #[serde(default = "Default::default")]
+    pub mail_dir: Option<PathBuf>,
+
+    /// The directory to store state files in. If not given, mujmap will try to choose something
+    /// sensible. You probably don't want to set this.
+    // TODO: this is only `Option` to allow serde to omit it. It will never be `None` after
+    //       `Config::from:path` returns. Making it non-optional somehow would be nice.
+    #[serde(default = "Default::default")]
+    pub state_dir: Option<PathBuf>,
 
     /// Customize the names and synchronization behaviors of notmuch tags with JMAP keywords and
     /// mailboxes.
@@ -266,13 +281,25 @@ fn default_convert_dos_to_unix() -> bool {
 }
 
 impl Config {
-    pub fn from_file(path: impl AsRef<Path>) -> Result<Self> {
-        let contents = fs::read_to_string(path.as_ref()).context(ReadConfigFileSnafu {
-            filename: path.as_ref(),
+    pub fn from_dir(path: &PathBuf) -> Result<Self> {
+        let cpath = path.canonicalize().context(CanonicalizeSnafu)?;
+
+        let filename = path.join("mujmap.toml");
+
+        let contents = fs::read_to_string(&filename).context(ReadConfigFileSnafu {
+            filename: &filename,
         })?;
-        let config: Self = toml::from_str(contents.as_str()).context(ParseConfigFileSnafu {
-            filename: path.as_ref(),
+        let mut config: Self = toml::from_str(contents.as_str()).context(ParseConfigFileSnafu {
+            filename: &filename,
         })?;
+
+        // In directory mode, if paths aren't offered then we use the config dir itself.
+        if config.mail_dir.is_none() {
+            config.mail_dir = Some(cpath.clone());
+        }
+        if config.state_dir.is_none() {
+            config.state_dir = Some(cpath.clone());
+        }
 
         // Perform final validation.
         ensure!(

@@ -1,5 +1,6 @@
 use crate::jmap;
 use crate::sync::NewEmail;
+use crate::Config;
 use const_format::formatcp;
 use lazy_static::lazy_static;
 use log::debug;
@@ -14,7 +15,6 @@ use std::collections::HashMap;
 use std::collections::HashSet;
 use std::fs;
 use std::io;
-use std::path::Path;
 use std::path::PathBuf;
 use std::path::StripPrefixError;
 
@@ -89,9 +89,15 @@ pub struct Local {
 
 impl Local {
     /// Open the local store.
-    ///
-    /// `mail_dir` *must* be a subdirectory of the notmuch path.
-    pub fn open(mail_dir: impl AsRef<Path>, dry_run: bool) -> Result<Self> {
+    pub fn open(config: &Config, dry_run: bool) -> Result<Self> {
+        let mail_dir = match &config.mail_dir {
+            Some(ref dir) => dir,
+            _ => todo!(),
+        }
+        .canonicalize()
+        .context(CanonicalizeSnafu {})?;
+        debug!("mail dir: {}", mail_dir.to_string_lossy());
+
         // Open the notmuch database with default config options.
         let db = Database::open_with_config::<PathBuf, PathBuf>(
             None,
@@ -107,10 +113,7 @@ impl Local {
 
         // Get the relative directory of the maildir to the database path.
         let canonical_db_path = db.path().canonicalize().context(CanonicalizeSnafu {})?;
-        let canonical_mail_dir_path = mail_dir
-            .as_ref()
-            .canonicalize()
-            .context(CanonicalizeSnafu {})?;
+        let canonical_mail_dir_path = mail_dir.canonicalize().context(CanonicalizeSnafu {})?;
         let relative_mail_dir = canonical_mail_dir_path
             .strip_prefix(&canonical_db_path)
             .context(MailDirNotASubdirOfNotmuchRootSnafu {
