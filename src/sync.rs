@@ -729,7 +729,7 @@ Continue? (y/N)
                 } else {
                     println!(
                         "\
-Please run notmuj again in an interactive terminal to resolve.
+Please run mujmap again in an interactive terminal to resolve.
 "
                     );
                     return Err(Error::MissingNotmuchDatabaseRevision {});
