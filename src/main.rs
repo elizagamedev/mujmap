@@ -61,9 +61,8 @@ fn try_main(stdout: &mut StandardStream) -> Result<(), Error> {
         .to_owned();
 
     // Determine working directory and load all data files.
-    let config_dir = args.path.clone().unwrap_or_else(|| PathBuf::from("."));
-
-    let config = Config::from_dir(&config_dir).context(OpenConfigFileSnafu {})?;
+    let config_path = args.path.clone().unwrap_or_else(|| PathBuf::from("."));
+    let config = Config::from_path(&config_path).context(OpenConfigFileSnafu {})?;
     debug!("Using config: {:?}", config);
 
     match args.command {
