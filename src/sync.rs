@@ -17,6 +17,7 @@ use std::io::{self, BufReader, BufWriter};
 use std::path::{Path, PathBuf};
 use symlink::symlink_file;
 use termcolor::{ColorSpec, StandardStream, WriteColor};
+use directories::ProjectDirs;
 
 #[derive(Debug, Snafu)]
 pub enum Error {
@@ -31,6 +32,12 @@ pub enum Error {
 
     #[snafu(display("Could not log string: {}", source))]
     Log { source: io::Error },
+
+    #[snafu(display("Could not create mujmap state dir `{}': {}", path.to_string_lossy(), source))]
+    CreateStateDir {
+        path: PathBuf,
+        source: io::Error,
+    },
 
     #[snafu(display("Could not read mujmap state file `{}': {}", filename.to_string_lossy(), source))]
     ReadStateFile {
@@ -207,10 +214,21 @@ pub fn sync(
 ) -> Result<(), Error> {
 
     let state_dir = match &config.state_dir {
-        Some(ref dir) => dir,
-        _ => todo!(),
-    }.canonicalize().context(CanonicalizeSnafu {})?;
+        Some(ref dir) => dir.clone(),
+        _ => {
+            let project_dirs = ProjectDirs::from("sh.eliza", "", "mujmap").unwrap();
+            project_dirs
+                .state_dir()
+                .unwrap_or_else(|| project_dirs.cache_dir())
+                .to_path_buf()
+        }
+    };
     debug!("state dir: {}", state_dir.to_string_lossy());
+
+    // Ensure the state dir exists.
+    fs::create_dir_all(&state_dir).context(CreateStateDirSnafu {
+        path: state_dir.clone(),
+    })?;
 
     // Grab lock.
     let lock_file_path = state_dir.join("mujmap.lock");
