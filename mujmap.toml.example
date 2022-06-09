@@ -58,6 +58,16 @@ password_command = "pass example@fastmail.com"
 
 # cache_dir =
 
+## The location of the mail dir, where downloaded email is finally stored. If
+## not given, mujmap will try to figure out what you want. You probably don't
+## want to set this.
+
+# mail_dir =
+
+## The directory to store state files in. If not given, mujmap will try to
+## choose something # sensible. You probably don't want to set this.
+
+# state_dir =
 
 ################################################################################
 ## Tag config
