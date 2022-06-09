@@ -4,6 +4,7 @@ use crate::remote::{self, Remote};
 use crate::{config::Config, local::Local};
 use crate::{jmap, local};
 use atty::Stream;
+use directories::ProjectDirs;
 use fslock::LockFile;
 use indicatif::ProgressBar;
 use log::{debug, error, warn};
@@ -20,9 +21,6 @@ use termcolor::{ColorSpec, StandardStream, WriteColor};
 
 #[derive(Debug, Snafu)]
 pub enum Error {
-    #[snafu(display("Could not canonicalize given path: {}", source))]
-    Canonicalize { source: io::Error },
-
     #[snafu(display("Could not open lock file `{}': {}", path.to_string_lossy(), source))]
     OpenLockFile { path: PathBuf, source: io::Error },
 
@@ -31,6 +29,9 @@ pub enum Error {
 
     #[snafu(display("Could not log string: {}", source))]
     Log { source: io::Error },
+
+    #[snafu(display("Could not create mujmap state dir `{}': {}", path.to_string_lossy(), source))]
+    CreateStateDir { path: PathBuf, source: io::Error },
 
     #[snafu(display("Could not read mujmap state file `{}': {}", filename.to_string_lossy(), source))]
     ReadStateFile {
@@ -206,12 +207,21 @@ pub fn sync(
     config: Config,
 ) -> Result<(), Error> {
     let state_dir = match &config.state_dir {
-        Some(ref dir) => dir,
-        _ => todo!(),
-    }
-    .canonicalize()
-    .context(CanonicalizeSnafu {})?;
+        Some(ref dir) => dir.clone(),
+        _ => {
+            let project_dirs = ProjectDirs::from("sh.eliza", "", "mujmap").unwrap();
+            project_dirs
+                .state_dir()
+                .unwrap_or_else(|| project_dirs.cache_dir())
+                .to_path_buf()
+        }
+    };
     debug!("state dir: {}", state_dir.to_string_lossy());
+
+    // Ensure the state dir exists.
+    fs::create_dir_all(&state_dir).context(CreateStateDirSnafu {
+        path: state_dir.clone(),
+    })?;
 
     // Grab lock.
     let lock_file_path = state_dir.join("mujmap.lock");

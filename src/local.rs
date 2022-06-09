@@ -78,14 +78,6 @@ pub struct Local {
 impl Local {
     /// Open the local store.
     pub fn open(config: &Config, dry_run: bool) -> Result<Self> {
-        let mail_dir = match &config.mail_dir {
-            Some(ref dir) => dir,
-            _ => todo!(),
-        }
-        .canonicalize()
-        .context(CanonicalizeSnafu {})?;
-        debug!("mail dir: {}", mail_dir.to_string_lossy());
-
         // Open the notmuch database with default config options.
         let db = Database::open_with_config::<PathBuf, PathBuf>(
             None,
@@ -106,6 +98,16 @@ impl Local {
             .map_or(db.path().into(), |root| PathBuf::from(root))
             .canonicalize()
             .context(CanonicalizeSnafu {})?;
+
+        // Figure out our maildir. Either the configured thing, or notmuch's mail root. Which in
+        // the worst case will be notmuch's database dir, but that's probably not the worst choice.
+        let mail_dir = match &config.mail_dir {
+            Some(ref dir) => dir.clone(),
+            _ => mail_root.clone(),
+        }
+        .canonicalize()
+        .context(CanonicalizeSnafu {})?;
+        debug!("mail dir: {}", mail_dir.to_string_lossy());
 
         // Build the query to search for all mail in our maildir. If the maildir is under the
         // notmuch mail root, then search under the relative maildir path (allowing multiple
