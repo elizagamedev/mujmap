@@ -281,10 +281,14 @@ fn default_convert_dos_to_unix() -> bool {
 }
 
 impl Config {
-    pub fn from_dir(path: &PathBuf) -> Result<Self> {
+    pub fn from_path(path: &PathBuf) -> Result<Self> {
         let cpath = path.canonicalize().context(CanonicalizeSnafu)?;
 
-        let filename = path.join("mujmap.toml");
+        let filename = if path.is_dir() {
+            cpath.join("mujmap.toml")
+        } else {
+            cpath.clone()
+        };
 
         let contents = fs::read_to_string(&filename).context(ReadConfigFileSnafu {
             filename: &filename,
@@ -294,11 +298,13 @@ impl Config {
         })?;
 
         // In directory mode, if paths aren't offered then we use the config dir itself.
-        if config.mail_dir.is_none() {
-            config.mail_dir = Some(cpath.clone());
-        }
-        if config.state_dir.is_none() {
-            config.state_dir = Some(cpath.clone());
+        if cpath.is_dir() {
+            if config.mail_dir.is_none() {
+                config.mail_dir = Some(cpath.clone());
+            }
+            if config.state_dir.is_none() {
+                config.state_dir = Some(cpath.clone());
+            }
         }
 
         // Perform final validation.
