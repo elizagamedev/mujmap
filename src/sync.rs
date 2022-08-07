@@ -4,7 +4,6 @@ use crate::remote::{self, Remote};
 use crate::{config::Config, local::Local};
 use crate::{jmap, local};
 use atty::Stream;
-use directories::ProjectDirs;
 use fslock::LockFile;
 use indicatif::ProgressBar;
 use log::{debug, error, warn};
@@ -206,16 +205,7 @@ pub fn sync(
     args: Args,
     config: Config,
 ) -> Result<(), Error> {
-    let state_dir = match &config.state_dir {
-        Some(ref dir) => dir.clone(),
-        _ => {
-            let project_dirs = ProjectDirs::from("sh.eliza", "", "mujmap").unwrap();
-            project_dirs
-                .state_dir()
-                .unwrap_or_else(|| project_dirs.cache_dir())
-                .to_path_buf()
-        }
-    };
+    let state_dir = config.state_dir.as_ref().unwrap();
     debug!("state dir: {}", state_dir.to_string_lossy());
 
     // Ensure the state dir exists.

@@ -1,3 +1,5 @@
+use directories::ProjectDirs;
+use lazy_static::lazy_static;
 use serde::Deserialize;
 use snafu::prelude::*;
 use std::{
@@ -91,8 +93,8 @@ pub struct Config {
 
     /// The cache directory in which to store mail files while they are being downloaded. The
     /// default is operating-system specific.
-    #[serde(default = "Default::default")]
-    pub cache_dir: Option<PathBuf>,
+    #[serde(default = "default_cache_dir")]
+    pub cache_dir: PathBuf,
 
     /// The location of the mail dir, where downloaded email is finally stored. If not given,
     /// mujmap will try to figure out what you want. You probably don't want to set this.
@@ -280,6 +282,14 @@ fn default_convert_dos_to_unix() -> bool {
     true
 }
 
+lazy_static! {
+    static ref PROJECT_DIRS: ProjectDirs = ProjectDirs::from("sh.eliza", "", "mujmap").unwrap();
+}
+
+fn default_cache_dir() -> PathBuf {
+    PROJECT_DIRS.cache_dir().to_path_buf()
+}
+
 impl Config {
     pub fn from_path(path: &PathBuf) -> Result<Self> {
         let cpath = path.canonicalize().context(CanonicalizeSnafu)?;
@@ -304,6 +314,17 @@ impl Config {
             }
             if config.state_dir.is_none() {
                 config.state_dir = Some(cpath.clone());
+            }
+        }
+        // In file mode, choose an appropriate state dir for the system.
+        else {
+            if config.state_dir.is_none() {
+                config.state_dir = Some(
+                    PROJECT_DIRS
+                        .state_dir()
+                        .unwrap_or_else(|| PROJECT_DIRS.cache_dir())
+                        .to_path_buf(),
+                );
             }
         }
 

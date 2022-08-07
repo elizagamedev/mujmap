@@ -1,7 +1,6 @@
 use crate::config::Config;
 use crate::jmap;
 use crate::sync::NewEmail;
-use directories::ProjectDirs;
 use snafu::prelude::*;
 use snafu::Snafu;
 use std::fs;
@@ -56,13 +55,7 @@ impl Cache {
     ///
     /// `mail_cur_dir` *must* be a subdirectory of the notmuch root maildir.
     pub fn open(mail_cur_dir: impl AsRef<Path>, config: &Config) -> Result<Self> {
-        let project_dirs = ProjectDirs::from("sh.eliza", "", "mujmap").unwrap();
-        let default_cache_dir = project_dirs.cache_dir();
-
-        let cache_dir = match &config.cache_dir {
-            Some(cache_dir) => cache_dir.as_ref(),
-            None => default_cache_dir,
-        };
+        let cache_dir = &config.cache_dir;
 
         // Ensure the cache dir exists.
         fs::create_dir_all(cache_dir).context(CreateCacheDirSnafu { path: cache_dir })?;
