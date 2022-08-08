@@ -45,6 +45,13 @@ pub enum Error {
 
     #[snafu(display("Could not decode password command output as utf-8"))]
     DecodePasswordCommand { source: FromUtf8Error },
+
+    #[snafu(display("`cache_dir' path must be absolute: {}", path.to_string_lossy()))]
+    CacheDirPathNotAbsolute { path: PathBuf },
+    #[snafu(display("`mail_dir' path must be absolute: {}", path.to_string_lossy()))]
+    MailDirPathNotAbsolute { path: PathBuf },
+    #[snafu(display("`state_dir' path must be absolute: {}", path.to_string_lossy()))]
+    StateDirPathNotAbsolute { path: PathBuf },
 }
 
 pub type Result<T, E = Error> = std::result::Result<T, E>;
@@ -341,6 +348,18 @@ impl Config {
             !config.tags.directory_separator.is_empty(),
             EmptyDirectorySeparatorSnafu {}
         );
+        ensure!(
+            config.cache_dir.is_absolute(),
+            CacheDirPathNotAbsoluteSnafu {
+                path: config.cache_dir
+            }
+        );
+        if let Some(ref path) = config.mail_dir {
+            ensure!(path.is_absolute(), MailDirPathNotAbsoluteSnafu { path });
+        }
+        if let Some(ref path) = config.state_dir {
+            ensure!(path.is_absolute(), StateDirPathNotAbsoluteSnafu { path });
+        }
         Ok(config)
     }
 

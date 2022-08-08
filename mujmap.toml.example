@@ -74,19 +74,21 @@ password_command = "pass example@fastmail.com"
 ## This mode is intended for tighter integration with notmuch "profiles".
 
 ## The cache directory in which to store mail files while they are being
-## downloaded. The default is operating-system specific.
+## downloaded. It must be an absolute path. The default is operating-system
+## specific.
 
 # cache_dir =
 
-## The location of the mail dir, where downloaded email is finally stored. If
-## not given in the config file, mujmap will choose an appropriate default for
-## the configuration mode. You probably don't want to set this.
+## The location of the mail dir, where downloaded email is finally stored. It
+## must be an absolute path. If not given in the config file, mujmap will choose
+## an appropriate default for the configuration mode. You probably don't want to
+## set this.
 
 # mail_dir =
 
-## The directory to store state files in. If not given, mujmap will choose an
-## appropriate default for the configuration mode. You probably don't want to set
-## this.
+## The directory to store state files in. It must be an absolute path. If not
+## given, mujmap will choose an appropriate default for the configuration mode.
+## You probably don't want to set this.
 
 # state_dir =
 
