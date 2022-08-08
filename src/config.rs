@@ -46,6 +46,9 @@ pub enum Error {
     #[snafu(display("Could not decode password command output as utf-8"))]
     DecodePasswordCommand { source: FromUtf8Error },
 
+    #[snafu(display("`mail_dir' path is not a directory: {}", path.to_string_lossy()))]
+    MailDirPathNotDirectory { path: PathBuf },
+
     #[snafu(display("`cache_dir' path must be absolute: {}", path.to_string_lossy()))]
     CacheDirPathNotAbsolute { path: PathBuf },
     #[snafu(display("`mail_dir' path must be absolute: {}", path.to_string_lossy()))]
@@ -318,6 +321,8 @@ impl Config {
         if cpath.is_dir() {
             if config.mail_dir.is_none() {
                 config.mail_dir = Some(cpath.clone());
+            } else {
+                ensure!(path.is_dir(), MailDirPathNotDirectorySnafu { path });
             }
             if config.state_dir.is_none() {
                 config.state_dir = Some(cpath.clone());
