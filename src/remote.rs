@@ -255,26 +255,55 @@ impl Remote {
             }
 
             Err(ureq::Error::Status(code, ref r)) if code == 401 => {
-                let safe_username = match username.find(':') {
-                    Some(idx) => &username[..idx],
-                    None => username,
+                fn encode_basic(username: &str, password: &str) -> String {
+                    let safe_username = match username.find(':') {
+                        Some(idx) => &username[..idx],
+                        None => username,
+                    };
+                    format!(
+                        "Basic {}",
+                        base64::encode(format!("{}:{}", safe_username, password))
+                    )
+                }
+
+                let authorization = match r.header("WWW-Authenticate") {
+                    Some(v) if v.starts_with("Basic") => {
+                        debug!("server offered Basic auth");
+                        Some(encode_basic(username, password))
+                    }
+
+                    Some(v) if v.starts_with("Bearer") => {
+                        debug!("server offered Bearer auth");
+                        Some(format!("Bearer {}", password))
+                    }
+
+                    // Server didn't offer any auth schemes but still requires authentication.
+                    // Probably it will accept Basic; try that.
+                    None => {
+                        debug!("server requires auth but didn't offer a scheme, assuming Basic");
+                        Some(encode_basic(username, password))
+                    }
+
+                    // No authorization, which will make the next call fail, and then we'll just
+                    // return an error.
+                    Some(v) => {
+                        debug!("server offered unsupported auth scheme: {}", v);
+                        None
+                    }
                 };
-                let authorization = format!(
-                    "Basic {}",
-                    base64::encode(format!("{}:{}", safe_username, password))
-                );
 
-                let r = agent
-                    .get(r.get_url())
-                    .set("Authorization", &authorization)
-                    .call()
-                    .context(OpenSessionSnafu { session_url })?;
+                let url = r.get_url();
 
-                let session_url = r.get_url().to_string();
+                let mut req = agent.get(url);
+                if let Some(a) = &authorization {
+                    req = req.set("Authorization", a);
+                }
+
+                let r = req.call().context(OpenSessionSnafu { session_url })?;
                 let session: jmap::Session = r.into_json().context(ResponseSnafu {})?;
                 Ok(Self {
-                    http_wrapper: HttpWrapper::new(Some(authorization), timeout),
-                    session_url,
+                    http_wrapper: HttpWrapper::new(authorization, timeout),
+                    session_url: url.to_string(),
                     session,
                 })
             }

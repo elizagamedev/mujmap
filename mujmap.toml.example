@@ -1,12 +1,13 @@
 ################################################################################
 ## Required config
 
-## Username for basic HTTP authentication.
+## Account username. Used for authentication to the server.
 
 username = "example@fastmail.com"
 
-## Shell command which will print a password to stdout for basic HTTP
-## authentication.
+## Shell command which will print a password or token to stdout for
+## authentication. You service provider might call this an "app password" or
+## "API token".
 
 password_command = "pass example@fastmail.com"
 
