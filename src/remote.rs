@@ -99,37 +99,34 @@ pub type Result<T, E = Error> = std::result::Result<T, E>;
 
 struct HttpWrapper {
     /// Value of HTTP Authorization header.
-    authorization: String,
+    authorization: Option<String>,
     /// Persistent ureq agent to use for all HTTP requests.
     agent: ureq::Agent,
 }
 
 impl HttpWrapper {
-    fn new(username: &str, password: &str, timeout: u64) -> Self {
-        let safe_username = match username.find(':') {
-            Some(idx) => &username[..idx],
-            None => username,
-        };
-        let authorization = format!(
-            "Basic {}",
-            base64::encode(format!("{}:{}", safe_username, password))
-        );
+    fn new(authorization: Option<String>, timeout: u64) -> Self {
         let agent = ureq::AgentBuilder::new()
             .redirect_auth_headers(ureq::RedirectAuthHeaders::SameHost)
             .timeout(Duration::from_secs(timeout))
             .build();
 
         Self {
-            agent,
             authorization,
+            agent,
+        }
+    }
+
+    fn apply_authorization(&self, req: ureq::Request) -> ureq::Request {
+        match &self.authorization {
+            Some(authorization) => req.set("Authorization", authorization),
+            _ => req,
         }
     }
 
     fn get_session(&self, session_url: &str) -> Result<(String, jmap::Session), ureq::Error> {
         let response = self
-            .agent
-            .get(session_url)
-            .set("Authorization", &self.authorization)
+            .apply_authorization(self.agent.get(session_url))
             .call()?;
 
         let session_url = response.get_url().to_string();
@@ -139,9 +136,7 @@ impl HttpWrapper {
 
     fn get_reader(&self, url: &str) -> Result<impl Read + Send> {
         Ok(self
-            .agent
-            .get(url)
-            .set("Authorization", &self.authorization)
+            .apply_authorization(self.agent.get(url))
             .call()
             .context(ReadEmailBlobSnafu {})?
             .into_reader()
@@ -152,9 +147,7 @@ impl HttpWrapper {
 
     fn post_string<D: DeserializeOwned>(&self, url: &str, body: &str) -> Result<D> {
         let post = self
-            .agent
-            .post(url)
-            .set("Authorization", &self.authorization)
+            .apply_authorization(self.agent.post(url))
             .send_string(body)
             .context(RequestSnafu {})?;
         if log_enabled!(log::Level::Trace) {
@@ -168,9 +161,7 @@ impl HttpWrapper {
 
     fn post_json<S: Serialize, D: DeserializeOwned>(&self, url: &str, body: S) -> Result<D> {
         let post = self
-            .agent
-            .post(url)
-            .set("Authorization", &self.authorization)
+            .apply_authorization(self.agent.post(url))
             .send_json(body)
             .context(RequestSnafu {})?;
         if log_enabled!(log::Level::Trace) {
@@ -214,7 +205,7 @@ impl Remote {
         }
     }
 
-    pub fn open_host(fqdn: &str, username: &str, password: &str, timeout: u64) -> Result<Self> {
+    fn open_host(fqdn: &str, username: &str, password: &str, timeout: u64) -> Result<Self> {
         let resolver = Resolver::from_system_conf().context(ParseResolvConfSnafu {})?;
         let mut address = format!("_jmap._tcp.{}", fqdn);
         if !address.ends_with(".") {
@@ -223,8 +214,6 @@ impl Remote {
         let resolver_response = resolver
             .srv_lookup(address.as_str())
             .context(SrvLookupSnafu { address })?;
-
-        let http_wrapper = HttpWrapper::new(username, password, timeout);
 
         // Try all SRV names in order of priority.
         let mut last_err = None;
@@ -238,38 +227,60 @@ impl Remote {
             target.pop();
 
             let url = format!("https://{}:{}/.well-known/jmap", target, name.port());
-            match http_wrapper.get_session(url.as_str()) {
-                Ok((session_url, session)) => {
-                    return Ok(Remote {
-                        http_wrapper,
-                        session_url,
-                        session,
-                    })
-                }
-
-                Err(e) => last_err = Some((url, e)),
+            match Self::open_url(url.as_str(), username, password, timeout) {
+                Ok(s) => return Ok(s),
+                Err(e) => last_err = Some(e),
             };
         }
         // All of them failed! Return the last error.
-        let (session_url, error) = last_err.unwrap();
-        Err(error).context(OpenSessionSnafu { session_url })
+        Err(last_err.unwrap())
     }
 
-    pub fn open_url(
-        session_url: &str,
-        username: &str,
-        password: &str,
-        timeout: u64,
-    ) -> Result<Self> {
-        let http_wrapper = HttpWrapper::new(username, password, timeout);
-        let (session_url, session) = http_wrapper
-            .get_session(session_url)
-            .context(OpenSessionSnafu { session_url })?;
-        Ok(Remote {
-            http_wrapper,
-            session_url,
-            session,
-        })
+    fn open_url(session_url: &str, username: &str, password: &str, timeout: u64) -> Result<Self> {
+        let agent = ureq::AgentBuilder::new()
+            .redirect_auth_headers(ureq::RedirectAuthHeaders::SameHost)
+            .timeout(Duration::from_secs(timeout))
+            .build();
+
+        match agent.get(session_url).call() {
+            Ok(r) => {
+                // Server returned success without authentication. Surprising, but valid.
+                let session_url = r.get_url().to_string();
+                let session: jmap::Session = r.into_json().context(ResponseSnafu {})?;
+                Ok(Self {
+                    http_wrapper: HttpWrapper::new(None, timeout),
+                    session_url,
+                    session,
+                })
+            }
+
+            Err(ureq::Error::Status(code, ref r)) if code == 401 => {
+                let safe_username = match username.find(':') {
+                    Some(idx) => &username[..idx],
+                    None => username,
+                };
+                let authorization = format!(
+                    "Basic {}",
+                    base64::encode(format!("{}:{}", safe_username, password))
+                );
+
+                let r = agent
+                    .get(r.get_url())
+                    .set("Authorization", &authorization)
+                    .call()
+                    .context(OpenSessionSnafu { session_url })?;
+
+                let session_url = r.get_url().to_string();
+                let session: jmap::Session = r.into_json().context(ResponseSnafu {})?;
+                Ok(Self {
+                    http_wrapper: HttpWrapper::new(Some(authorization), timeout),
+                    session_url,
+                    session,
+                })
+            }
+
+            Err(e) => Err(e).context(OpenSessionSnafu { session_url }),
+        }
     }
 
     /// Return a list of all `Email` IDs that exist on the server and a state `String` returned by
