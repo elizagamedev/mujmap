@@ -53,6 +53,9 @@ pub enum Error {
         source: ureq::Error,
     },
 
+    #[snafu(display("Session username doesn't match configured username: {}", username))]
+    UsernameMismatch { username: String },
+
     #[snafu(display("Could not complete API request: {}", source))]
     Request { source: ureq::Error },
 
@@ -185,7 +188,8 @@ pub struct Remote {
 impl Remote {
     pub fn open(config: &Config) -> Result<Self> {
         let password = config.password().context(GetPasswordSnafu {})?;
-        match (&config.fqdn, &config.session_url) {
+
+        let remote = match (&config.fqdn, &config.session_url) {
             (Some(fqdn), _) => {
                 Self::open_host(&fqdn, config.username.as_str(), &password, config.timeout)
             }
@@ -202,7 +206,16 @@ impl Remote {
                     .context(NoDomainNameSnafu {})?;
                 Self::open_host(domain, config.username.as_str(), &password, config.timeout)
             }
-        }
+        }?;
+
+        ensure!(
+            remote.session.username == config.username,
+            UsernameMismatchSnafu {
+                username: remote.session.username
+            }
+        );
+
+        Ok(remote)
     }
 
     fn open_host(fqdn: &str, username: &str, password: &str, timeout: u64) -> Result<Self> {
