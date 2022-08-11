@@ -8,6 +8,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ### Changed
 - mujmap now prints a more comprehensive guide on how to recover from a missing
   state file. (#15)
+- Leading and trailing whitespace (including newlines) is now removed from the
+  password returned by `password_command`. (#41)
 
 ## [0.2.0] - 2022-06-06
 ### Added

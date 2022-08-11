@@ -305,6 +305,6 @@ impl Config {
             }
         );
         let stdout = String::from_utf8(output.stdout).context(DecodePasswordCommandSnafu {})?;
-        Ok(stdout)
+        Ok(stdout.trim().to_string())
     }
 }
