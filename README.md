@@ -168,9 +168,35 @@ mujmap cannot and will never be able to:
 
 ## Troubleshooting
 ### Status Code 401 (Unauthorized)
-- [ ] Ensure that your mail server supports HTTP Basic Auth. *Fastmail does.* See #5.
-- [ ] Verify that you are using the correct username and password. Fastmail
-      requires a special third-party password *specifically for JMAP access*.
+
+If you're using Fastmail (which, let's be honest, is practically a certainty at
+the time of writing), you may have recently encountered errors with
+username/password authentication (HTTP Basic Auth). This may be caused by
+Fastmail phasing out username/password-based authentication methods, as
+described in [this blog
+post](https://jmap.topicbox.com/groups/fastmail-dev-beta/Tc47db6ee4fbb5451).
+
+While this is objectively a good thing, and while it seems the intention was to
+roll this change out slowly, the API endpoint advertised by Fastmail DNS SRV
+records has almost immediately changed following the publication of this blog
+post, causing 401 errors in existing mujmap configurations. You have two
+options:
+
+- Switch to bearer tokens by following the guide in the blog post. mujmap
+  supports bearer tokens via the `password_command` config option in the latest
+  `main` branch revision but not yet in a versioned release.
+- Remove `fqdn` from your config if it's set, and add or change `session_url` to
+  explicitly point to the old JMAP endpoint, located at
+  `https://jmap.fastmail.com/.well-known/jmap`.
+
+If your 401 errors are unrelated to the above situation, try the following
+steps:
+
+- [ ] Ensure that your mail server supports either HTTP Basic Auth or Bearer
+      token auth.
+- [ ] Verify that you are using the correct username and password/bearer token.
+      If you are using HTTP Basic Auth, Fastmail requires a special third-party
+      password *specifically for JMAP access*.
 - [ ] Verify that you are using a `password_command` which prints the correct
       password to stdout. If the password command fails, mujmap logs its stderr.
 - [ ] If using Fastmail, check your login logs on the website for additional
