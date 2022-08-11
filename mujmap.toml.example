@@ -54,11 +54,43 @@ password_command = "pass example@fastmail.com"
 
 # convert_dos_to_unix = true
 
+################################################################################
+## Path config
+##
+## mujmap needs places to store email and bits of working state. These paths
+## can all be specified in the config file, but most of the time you don't need to
+## do this and it will choose reasonable defaults.
+##
+## mujmap has two "configuration modes" that inform how path defaults are chosen.
+##
+## In "directory mode", the --path option points to the directory containing
+## mujmap.toml. In this mode, the default locations for mail and state files will
+## be in subdirectories under this directory. This is the right mode to keep the
+## entire mujmap data storage in a single place.
+##
+## In "file mode", the --path option points to a config file. In this mode, the
+## default location for mail will be determined from notmuch's `mail_root` config
+## variable, while the default location for state is operating-system specific.
+## This mode is intended for tighter integration with notmuch "profiles".
+
 ## The cache directory in which to store mail files while they are being
-## downloaded. The default is operating-system specific.
+## downloaded. It must be an absolute path. The default is operating-system
+## specific.
 
 # cache_dir =
 
+## The location of the mail dir, where downloaded email is finally stored. It
+## must be an absolute path. If not given in the config file, mujmap will choose
+## an appropriate default for the configuration mode. You probably don't want to
+## set this.
+
+# mail_dir =
+
+## The directory to store state files in. It must be an absolute path. If not
+## given, mujmap will choose an appropriate default for the configuration mode.
+## You probably don't want to set this.
+
+# state_dir =
 
 ################################################################################
 ## Tag config

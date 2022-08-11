@@ -29,6 +29,9 @@ pub enum Error {
     #[snafu(display("Could not log string: {}", source))]
     Log { source: io::Error },
 
+    #[snafu(display("Could not create mujmap state dir `{}': {}", path.to_string_lossy(), source))]
+    CreateStateDir { path: PathBuf, source: io::Error },
+
     #[snafu(display("Could not read mujmap state file `{}': {}", filename.to_string_lossy(), source))]
     ReadStateFile {
         filename: PathBuf,
@@ -199,12 +202,19 @@ impl LatestState {
 pub fn sync(
     stdout: &mut StandardStream,
     info_color_spec: ColorSpec,
-    mail_dir: PathBuf,
     args: Args,
     config: Config,
 ) -> Result<(), Error> {
+    let state_dir = config.state_dir.as_ref().unwrap();
+    debug!("state dir: {}", state_dir.to_string_lossy());
+
+    // Ensure the state dir exists.
+    fs::create_dir_all(&state_dir).context(CreateStateDirSnafu {
+        path: state_dir.clone(),
+    })?;
+
     // Grab lock.
-    let lock_file_path = mail_dir.join("mujmap.lock");
+    let lock_file_path = state_dir.join("mujmap.lock");
     let mut lock = LockFile::open(&lock_file_path).context(OpenLockFileSnafu {
         path: lock_file_path,
     })?;
@@ -215,14 +225,14 @@ pub fn sync(
     }
 
     // Load the intermediary state.
-    let latest_state_filename = mail_dir.join("mujmap.state.json");
+    let latest_state_filename = state_dir.join("mujmap.state.json");
     let latest_state = LatestState::open(&latest_state_filename).unwrap_or_else(|e| {
         warn!("{e}");
         LatestState::empty()
     });
 
     // Open the local notmuch database.
-    let local = Local::open(mail_dir, args.dry_run).context(OpenLocalSnafu {})?;
+    let local = Local::open(&config, args.dry_run).context(OpenLocalSnafu {})?;
 
     // Open the local cache.
     let cache = Cache::open(&local.mail_cur_dir, &config).context(OpenCacheSnafu {})?;

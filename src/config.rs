@@ -1,8 +1,10 @@
+use directories::ProjectDirs;
+use lazy_static::lazy_static;
 use serde::Deserialize;
 use snafu::prelude::*;
 use std::{
     fs, io,
-    path::{Path, PathBuf},
+    path::PathBuf,
     process::{Command, ExitStatus},
     string::FromUtf8Error,
 };
@@ -11,6 +13,9 @@ use snafu::Snafu;
 
 #[derive(Debug, Snafu)]
 pub enum Error {
+    #[snafu(display("Could not canonicalize config dir path: {}", source))]
+    Canonicalize { source: io::Error },
+
     #[snafu(display("Could not read config file `{}': {}", filename.to_string_lossy(), source))]
     ReadConfigFile {
         filename: PathBuf,
@@ -40,6 +45,16 @@ pub enum Error {
 
     #[snafu(display("Could not decode password command output as utf-8"))]
     DecodePasswordCommand { source: FromUtf8Error },
+
+    #[snafu(display("`mail_dir' path is not a directory: {}", path.to_string_lossy()))]
+    MailDirPathNotDirectory { path: PathBuf },
+
+    #[snafu(display("`cache_dir' path must be absolute: {}", path.to_string_lossy()))]
+    CacheDirPathNotAbsolute { path: PathBuf },
+    #[snafu(display("`mail_dir' path must be absolute: {}", path.to_string_lossy()))]
+    MailDirPathNotAbsolute { path: PathBuf },
+    #[snafu(display("`state_dir' path must be absolute: {}", path.to_string_lossy()))]
+    StateDirPathNotAbsolute { path: PathBuf },
 }
 
 pub type Result<T, E = Error> = std::result::Result<T, E>;
@@ -88,8 +103,20 @@ pub struct Config {
 
     /// The cache directory in which to store mail files while they are being downloaded. The
     /// default is operating-system specific.
+    #[serde(default = "default_cache_dir")]
+    pub cache_dir: PathBuf,
+
+    /// The location of the mail dir, where downloaded email is finally stored. If not given,
+    /// mujmap will try to figure out what you want. You probably don't want to set this.
     #[serde(default = "Default::default")]
-    pub cache_dir: Option<PathBuf>,
+    pub mail_dir: Option<PathBuf>,
+
+    /// The directory to store state files in. If not given, mujmap will try to choose something
+    /// sensible. You probably don't want to set this.
+    // TODO: this is only `Option` to allow serde to omit it. It will never be `None` after
+    //       `Config::from:path` returns. Making it non-optional somehow would be nice.
+    #[serde(default = "Default::default")]
+    pub state_dir: Option<PathBuf>,
 
     /// Customize the names and synchronization behaviors of notmuch tags with JMAP keywords and
     /// mailboxes.
@@ -265,14 +292,53 @@ fn default_convert_dos_to_unix() -> bool {
     true
 }
 
+lazy_static! {
+    static ref PROJECT_DIRS: ProjectDirs = ProjectDirs::from("sh.eliza", "", "mujmap").unwrap();
+}
+
+fn default_cache_dir() -> PathBuf {
+    PROJECT_DIRS.cache_dir().to_path_buf()
+}
+
 impl Config {
-    pub fn from_file(path: impl AsRef<Path>) -> Result<Self> {
-        let contents = fs::read_to_string(path.as_ref()).context(ReadConfigFileSnafu {
-            filename: path.as_ref(),
+    pub fn from_path(path: &PathBuf) -> Result<Self> {
+        let cpath = path.canonicalize().context(CanonicalizeSnafu)?;
+
+        let filename = if path.is_dir() {
+            cpath.join("mujmap.toml")
+        } else {
+            cpath.clone()
+        };
+
+        let contents = fs::read_to_string(&filename).context(ReadConfigFileSnafu {
+            filename: &filename,
         })?;
-        let config: Self = toml::from_str(contents.as_str()).context(ParseConfigFileSnafu {
-            filename: path.as_ref(),
+        let mut config: Self = toml::from_str(contents.as_str()).context(ParseConfigFileSnafu {
+            filename: &filename,
         })?;
+
+        // In directory mode, if paths aren't offered then we use the config dir itself.
+        if cpath.is_dir() {
+            if config.mail_dir.is_none() {
+                config.mail_dir = Some(cpath.clone());
+            } else {
+                ensure!(path.is_dir(), MailDirPathNotDirectorySnafu { path });
+            }
+            if config.state_dir.is_none() {
+                config.state_dir = Some(cpath.clone());
+            }
+        }
+        // In file mode, choose an appropriate state dir for the system.
+        else {
+            if config.state_dir.is_none() {
+                config.state_dir = Some(
+                    PROJECT_DIRS
+                        .state_dir()
+                        .unwrap_or_else(|| PROJECT_DIRS.cache_dir())
+                        .to_path_buf(),
+                );
+            }
+        }
 
         // Perform final validation.
         ensure!(
@@ -287,6 +353,18 @@ impl Config {
             !config.tags.directory_separator.is_empty(),
             EmptyDirectorySeparatorSnafu {}
         );
+        ensure!(
+            config.cache_dir.is_absolute(),
+            CacheDirPathNotAbsoluteSnafu {
+                path: config.cache_dir
+            }
+        );
+        if let Some(ref path) = config.mail_dir {
+            ensure!(path.is_absolute(), MailDirPathNotAbsoluteSnafu { path });
+        }
+        if let Some(ref path) = config.state_dir {
+            ensure!(path.is_absolute(), StateDirPathNotAbsoluteSnafu { path });
+        }
         Ok(config)
     }
 

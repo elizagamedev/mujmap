@@ -7,6 +7,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ## [Unreleased]
 ### Added
 - Support for bearer token authentication (#40)
+- New config options `mail_dir` and `state_dir` to allow mujmap's persistent
+  storage to be split out according to local policy (eg XDG dirs) (#33)
 
 ### Changed
 - mujmap now prints a more comprehensive guide on how to recover from a missing
