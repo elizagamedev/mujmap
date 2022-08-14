@@ -281,22 +281,40 @@ pub fn sync(
         })
         .unwrap_or_else(|| full_sync(&mut remote))?;
 
+    // Get ids for any emails we think are in the maildir but are not
+    let missing_ids: HashSet<jmap::Id> = local_emails
+        .values()
+        .filter(|e| !local.email_exists_on_disk(e))
+        .map(|e| e.id.clone())
+        .collect();
+
     // Retrieve the updated `Email` objects from the server.
     stdout.set_color(&info_color_spec).context(LogSnafu {})?;
     write!(stdout, "Retrieving metadata...").context(LogSnafu {})?;
     stdout.reset().context(LogSnafu {})?;
-    writeln!(stdout, " ({} possibly changed)", updated_ids.len()).context(LogSnafu {})?;
+    write!(stdout, " ({} possibly changed)", updated_ids.len()).context(LogSnafu {})?;
+    if !missing_ids.is_empty() {
+        write!(stdout, " ({} lost)", missing_ids.len()).context(LogSnafu {})?
+    }
+    writeln!(stdout, "").context(LogSnafu {})?;
     stdout.flush().context(LogSnafu {})?;
 
     let remote_emails = remote
-        .get_emails(updated_ids.iter(), &mailboxes, &config.tags)
+        .get_emails(
+            [updated_ids, missing_ids.clone()].iter().flatten(),
+            &mailboxes,
+            &config.tags,
+        )
         .context(GetRemoteEmailsSnafu {})?;
 
     // Before merging, download the new files into the cache.
     let mut new_emails: HashMap<jmap::Id, NewEmail> = remote_emails
         .values()
         .filter(|remote_email| match local_emails.get(&remote_email.id) {
-            Some(local_email) => local_email.blob_id != remote_email.blob_id,
+            Some(local_email) => {
+                local_email.blob_id != remote_email.blob_id
+                    || !local.email_exists_on_disk(local_email)
+            }
             None => true,
         })
         .map(|remote_email| {
@@ -313,7 +331,10 @@ pub fn sync(
 
     let new_emails_missing_from_cache: Vec<&NewEmail> = new_emails
         .values()
-        .filter(|x| !x.cache_path.exists() && !local_emails.contains_key(&x.remote_email.id))
+        .filter(|x| match local_emails.get(&x.remote_email.id) {
+            Some(le) => !local.email_exists_on_disk(le),
+            None => !x.cache_path.exists(),
+        })
         .collect();
 
     if !new_emails_missing_from_cache.is_empty() {
@@ -442,8 +463,10 @@ pub fn sync(
                         .add_new_email(&new_email)
                         .context(AddLocalEmailSnafu {})?;
                     if let Some(e) = local_emails.get(&new_email.remote_email.id) {
-                        // Move the old message to the destroyed emails set.
-                        destroyed_local_emails.push(e);
+                        // It already existed; delete old versions, but not ones we're reloading
+                        if !missing_ids.contains(&e.id) {
+                            destroyed_local_emails.push(e);
+                        }
                     }
                     Ok((local_email.id.clone(), local_email))
                 })
