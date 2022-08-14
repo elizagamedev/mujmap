@@ -305,4 +305,8 @@ impl Local {
         }
         Ok(())
     }
+
+    pub fn email_exists_on_disk(&self, email: &Email) -> bool {
+        email.path.exists()
+    }
 }
