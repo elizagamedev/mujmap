@@ -91,11 +91,11 @@ impl Local {
     /// Open the local store.
     ///
     /// `mail_dir` *must* be a subdirectory of the notmuch path.
-    pub fn open(mail_dir: impl AsRef<Path>, dry_run: bool) -> Result<Self> {
+    pub fn open(mail_dir: impl AsRef<Path>, read_only: bool) -> Result<Self> {
         // Open the notmuch database with default config options.
         let db = Database::open_with_config::<PathBuf, PathBuf>(
             None,
-            if dry_run {
+            if read_only {
                 notmuch::DatabaseMode::ReadOnly
             } else {
                 notmuch::DatabaseMode::ReadWrite
@@ -123,7 +123,7 @@ impl Local {
 
         // Ensure the maildir contains the standard cur, new, and tmp dirs.
         let mail_cur_dir = canonical_mail_dir_path.join("cur");
-        if !dry_run {
+        if !read_only {
             for path in &[
                 &mail_cur_dir,
                 &canonical_mail_dir_path.join("new"),

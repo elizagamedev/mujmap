@@ -7,6 +7,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ## [Unreleased]
 ### Added
 - Support for bearer token authentication (#40)
+- Support for pushing changes without pulling (#26)
 
 ### Changed
 - mujmap now prints a more comprehensive guide on how to recover from a missing

@@ -67,9 +67,24 @@ fn try_main(stdout: &mut StandardStream) -> Result<(), Error> {
     debug!("Using config: {:?}", config);
 
     match args.command {
-        args::Command::Sync => {
-            sync(stdout, info_color_spec, mail_dir, args, config).context(SyncSnafu {})
-        }
+        args::Command::Push => sync(
+            stdout,
+            info_color_spec,
+            mail_dir,
+            args,
+            config,
+            /*pull=*/ false,
+        )
+        .context(SyncSnafu {}),
+        args::Command::Sync => sync(
+            stdout,
+            info_color_spec,
+            mail_dir,
+            args,
+            config,
+            /*pull=*/ true,
+        )
+        .context(SyncSnafu {}),
         args::Command::Send {
             read_recipients,
             recipients,

@@ -100,6 +100,21 @@ the slightly out-of-date and not completely-accurately-implemented-as-written
 [DESIGN.org](https://github.com/elizagamedev/mujmap/blob/main/DESIGN.org) file
 goes into more detail.
 
+#### Pushing without Pulling
+Besides what is described above, you may also use `mujmap push` to local push
+changes without pulling in remote changes. This may be useful when invoking
+mujmap in pre/post notmuch hooks. You should only use `push` over `sync` when
+specifically necessary to reduce the number of redundant operations.
+
+There is no `mujmap pull`, since pulling without pushing complicates the design
+tenet that the mujmap database is the single source of truth during a conflict.
+(The reason being that pulling without pushing changes the notmuch database, and
+now mujmap thinks those changes are in fact local revisions which must be
+pushed, potentially reverting changes made by a third party on the remote. If
+that's confusing to you, sorry, it's not easy to describe the problem
+succinctly.) It's possible to sort of work around this issue, but in almost
+every case I can think of, you might as well just `sync` instead.
+
 ### Sending
 Use `mujmap send` to send an email. This subcommand is designed to operate
 mostly like sendmail; i.e., it reads an

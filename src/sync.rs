@@ -101,8 +101,11 @@ pub enum Error {
     #[snafu(display("Could not index local updated emails: {}", source))]
     IndexLocalUpdatedEmails { source: local::Error },
 
-    #[snafu(display("Could not add new local email: {}", source))]
-    AddLocalEmail { source: notmuch::Error },
+    #[snafu(display("Could not add new local email `{}': {}", filename.to_string_lossy(), source))]
+    AddLocalEmail {
+        filename: PathBuf,
+        source: notmuch::Error,
+    },
 
     #[snafu(display("Could not update local email: {}", source))]
     UpdateLocalEmail { source: notmuch::Error },
@@ -202,6 +205,7 @@ pub fn sync(
     mail_dir: PathBuf,
     args: Args,
     config: Config,
+    pull: bool,
 ) -> Result<(), Error> {
     // Grab lock.
     let lock_file_path = mail_dir.join("mujmap.lock");
@@ -222,7 +226,7 @@ pub fn sync(
     });
 
     // Open the local notmuch database.
-    let local = Local::open(mail_dir, args.dry_run).context(OpenLocalSnafu {})?;
+    let local = Local::open(mail_dir, args.dry_run || !pull).context(OpenLocalSnafu {})?;
 
     // Open the local cache.
     let cache = Cache::open(&local.mail_cur_dir, &config).context(OpenCacheSnafu {})?;
@@ -254,7 +258,7 @@ pub fn sync(
     // Create lists of updated and destroyed `Email` IDs. This is done in one of two ways, depending
     // on if we have a working JMAP `Email` state.
     let (state, updated_ids, destroyed_ids) = latest_state
-        .jmap_state
+        .jmap_state.clone()
         .map(|jmap_state| {
             match remote.changed_email_ids(jmap_state) {
                 Ok((state, created, mut updated, destroyed)) => {
@@ -385,202 +389,210 @@ pub fn sync(
         .filter(|(id, _)| !destroyed_ids.contains(&id))
         .collect();
 
-    stdout.set_color(&info_color_spec).context(LogSnafu {})?;
-    write!(stdout, "Applying changes to notmuch database...").context(LogSnafu {})?;
-    stdout.reset().context(LogSnafu {})?;
-    writeln!(
-        stdout,
-        " ({} new, {} changed, {} destroyed)",
-        new_emails.len(),
-        remote_emails.len(),
-        destroyed_ids.len()
-    )
-    .context(LogSnafu {})?;
-    stdout.flush().context(LogSnafu {})?;
+    if pull {
+        stdout.set_color(&info_color_spec).context(LogSnafu {})?;
+        write!(stdout, "Applying changes to notmuch database...").context(LogSnafu {})?;
+        stdout.reset().context(LogSnafu {})?;
+        writeln!(
+            stdout,
+            " ({} new, {} changed, {} destroyed)",
+            new_emails.len(),
+            remote_emails.len(),
+            destroyed_ids.len()
+        )
+        .context(LogSnafu {})?;
+        stdout.flush().context(LogSnafu {})?;
 
-    // Update local messages.
-    if !args.dry_run {
-        // Collect the local messages which will be destroyed. We will add to this list any messages
-        // with new blob IDs.
-        let mut destroyed_local_emails: Vec<&local::Email> = destroyed_ids
-            .into_iter()
-            .flat_map(|x| local_emails.get(&x))
-            .collect();
+        // Update local messages.
+        if !args.dry_run {
+            // Collect the local messages which will be destroyed. We will add to this list any
+            // messages with new blob IDs.
+            let mut destroyed_local_emails: Vec<&local::Email> = destroyed_ids
+                .into_iter()
+                .flat_map(|x| local_emails.get(&x))
+                .collect();
 
-        // Symlink the new mail files into the maildir...
-        for new_email in new_emails.values() {
-            debug!(
-                "Making symlink from `{}' to `{}'",
-                &new_email.cache_path.to_string_lossy(),
-                &new_email.maildir_path.to_string_lossy(),
-            );
-            if new_email.maildir_path.exists() {
-                warn!(
-                    "File `{}' already existed in maildir but was not indexed. Replacing...",
+            // Symlink the new mail files into the maildir...
+            for new_email in new_emails.values() {
+                debug!(
+                    "Making symlink from `{}' to `{}'",
+                    &new_email.cache_path.to_string_lossy(),
                     &new_email.maildir_path.to_string_lossy(),
                 );
-                fs::remove_file(&new_email.maildir_path).context(RemoveUnindexedMailFileSnafu {
-                    path: &new_email.maildir_path,
-                })?;
-            }
-            symlink_file(&new_email.cache_path, &new_email.maildir_path).context(
-                MakeMaildirSymlinkSnafu {
-                    from: &new_email.cache_path,
-                    to: &new_email.maildir_path,
-                },
-            )?;
-        }
-
-        let mut commit_changes = || -> Result<()> {
-            local.begin_atomic().context(BeginAtomicSnafu {})?;
-
-            // ...and add them to the database.
-            let new_local_emails = new_emails
-                .values()
-                .map(|new_email| {
-                    let local_email = local
-                        .add_new_email(&new_email)
-                        .context(AddLocalEmailSnafu {})?;
-                    if let Some(e) = local_emails.get(&new_email.remote_email.id) {
-                        // Move the old message to the destroyed emails set.
-                        destroyed_local_emails.push(e);
-                    }
-                    Ok((local_email.id.clone(), local_email))
-                })
-                .collect::<Result<HashMap<_, _>>>()?;
-
-            // Update local emails with remote tags.
-            //
-            // XXX: If the server contains two or more of a message which notmuch considers a
-            // duplicate, it will be updated *for each duplicate* in a non-deterministic order. This
-            // may cause surprises.
-            for remote_email in remote_emails.values() {
-                // Skip email which has been updated offline.
-                if updated_local_emails.contains_key(&remote_email.id) {
-                    continue;
-                }
-
-                // Do it!
-                let local_email = [
-                    new_local_emails.get(&remote_email.id),
-                    local_emails.get(&remote_email.id),
-                ]
-                .into_iter()
-                .flatten()
-                .next()
-                .ok_or_else(|| {
-                    error!(
-                        "Could not find local email for updated remote ID {}",
-                        remote_email.id
+                if new_email.maildir_path.exists() {
+                    warn!(
+                        "File `{}' already existed in maildir but was not indexed. Replacing...",
+                        &new_email.maildir_path.to_string_lossy(),
                     );
-                    Error::ProgrammerError {}
-                })?;
-
-                // Add mailbox tags
-                let mut tags: HashSet<&str> =
-                    remote_email.tags.iter().map(|s| s.as_str()).collect();
-                for id in &remote_email.mailbox_ids {
-                    if let Some(mailbox) = mailboxes.mailboxes_by_id.get(id) {
-                        tags.insert(&mailbox.tag);
-                    }
+                    fs::remove_file(&new_email.maildir_path).context(
+                        RemoveUnindexedMailFileSnafu {
+                            path: &new_email.maildir_path,
+                        },
+                    )?;
                 }
+                symlink_file(&new_email.cache_path, &new_email.maildir_path).context(
+                    MakeMaildirSymlinkSnafu {
+                        from: &new_email.cache_path,
+                        to: &new_email.maildir_path,
+                    },
+                )?;
+            }
 
-                local
-                    .update_email_tags(local_email, tags)
-                    .context(UpdateLocalEmailSnafu {})?;
+            let mut commit_changes = || -> Result<()> {
+                local.begin_atomic().context(BeginAtomicSnafu {})?;
 
-                // In `update' notmuch may have renamed the file on disk when setting maildir
-                // flags, so we need to update our idea of the filename to match so that, for new
-                // messages, we can reliably replace the symlink later.
+                // ...and add them to the database.
+                let new_local_emails = new_emails
+                    .values()
+                    .map(|new_email| {
+                        let local_email =
+                            local
+                                .add_new_email(&new_email)
+                                .context(AddLocalEmailSnafu {
+                                    filename: &new_email.cache_path,
+                                })?;
+                        if let Some(e) = local_emails.get(&new_email.remote_email.id) {
+                            // Move the old message to the destroyed emails set.
+                            destroyed_local_emails.push(e);
+                        }
+                        Ok((local_email.id.clone(), local_email))
+                    })
+                    .collect::<Result<HashMap<_, _>>>()?;
+
+                // Update local emails with remote tags.
                 //
-                // The `Message' might have multiple paths though (if more than one message has the
-                // same id) so we have to get all the filenames and then find the one that matches
-                // ours. Fortunately, our generated name (the raw JMAP mailbox.message id) will
-                // always be a substring of notmuch's version (same name with flags attached), so a
-                // starts-with test is enough.
-                if let Some(mut new_email) = new_emails.get_mut(&remote_email.id) {
-                    if let Some(our_filename) = new_email
-                        .maildir_path
-                        .file_name()
-                        .map(|p| p.to_string_lossy())
-                    {
-                        if let Some(message) = local
-                            .get_message(&local_email.message_id)
-                            .context(GetNotmuchMessageSnafu {})?
+                // XXX: If the server contains two or more of a message which notmuch considers a
+                // duplicate, it will be updated *for each duplicate* in a non-deterministic order.
+                // This may cause surprises.
+                for remote_email in remote_emails.values() {
+                    // Skip email which has been updated offline.
+                    if updated_local_emails.contains_key(&remote_email.id) {
+                        continue;
+                    }
+
+                    // Do it!
+                    let local_email = [
+                        new_local_emails.get(&remote_email.id),
+                        local_emails.get(&remote_email.id),
+                    ]
+                    .into_iter()
+                    .flatten()
+                    .next()
+                    .ok_or_else(|| {
+                        error!(
+                            "Could not find local email for updated remote ID {}",
+                            remote_email.id
+                        );
+                        Error::ProgrammerError {}
+                    })?;
+
+                    // Add mailbox tags
+                    let mut tags: HashSet<&str> =
+                        remote_email.tags.iter().map(|s| s.as_str()).collect();
+                    for id in &remote_email.mailbox_ids {
+                        if let Some(mailbox) = mailboxes.mailboxes_by_id.get(id) {
+                            tags.insert(&mailbox.tag);
+                        }
+                    }
+
+                    local
+                        .update_email_tags(local_email, tags)
+                        .context(UpdateLocalEmailSnafu {})?;
+
+                    // In `update' notmuch may have renamed the file on disk when setting maildir
+                    // flags, so we need to update our idea of the filename to match so that, for
+                    // new messages, we can reliably replace the symlink later.
+                    //
+                    // The `Message' might have multiple paths though (if more than one message has
+                    // the same id) so we have to get all the filenames and then find the one that
+                    // matches ours. Fortunately, our generated name (the raw JMAP mailbox.message
+                    // id) will always be a substring of notmuch's version (same name with flags
+                    // attached), so a starts-with test is enough.
+                    if let Some(mut new_email) = new_emails.get_mut(&remote_email.id) {
+                        if let Some(our_filename) = new_email
+                            .maildir_path
+                            .file_name()
+                            .map(|p| p.to_string_lossy())
                         {
-                            if let Some(new_maildir_path) = message
-                                .filenames()
-                                .into_iter()
-                                .filter(|f| {
-                                    f.file_name().map_or(false, |p| {
-                                        p.to_string_lossy().starts_with(&*our_filename)
-                                    })
-                                })
-                                .next()
+                            if let Some(message) = local
+                                .get_message(&local_email.message_id)
+                                .context(GetNotmuchMessageSnafu {})?
                             {
-                                new_email.maildir_path = new_maildir_path;
+                                if let Some(new_maildir_path) = message
+                                    .filenames()
+                                    .into_iter()
+                                    .filter(|f| {
+                                        f.file_name().map_or(false, |p| {
+                                            p.to_string_lossy().starts_with(&*our_filename)
+                                        })
+                                    })
+                                    .next()
+                                {
+                                    new_email.maildir_path = new_maildir_path;
+                                }
                             }
                         }
                     }
                 }
-            }
 
-            // Finally, remove the old messages from the database.
-            for destroyed_local_email in &destroyed_local_emails {
-                local
-                    .remove_email(*destroyed_local_email)
-                    .context(RemoveLocalEmailSnafu {})?;
-            }
+                // Finally, remove the old messages from the database.
+                for destroyed_local_email in &destroyed_local_emails {
+                    local
+                        .remove_email(*destroyed_local_email)
+                        .context(RemoveLocalEmailSnafu {})?;
+                }
 
-            local.end_atomic().context(EndAtomicSnafu {})?;
-            Ok(())
-        };
+                local.end_atomic().context(EndAtomicSnafu {})?;
+                Ok(())
+            };
 
-        if let Err(e) = commit_changes() {
-            // Remove all the symlinks.
-            for new_email in new_emails.values() {
-                debug!(
-                    "Removing symlink `{}'",
-                    &new_email.maildir_path.to_string_lossy(),
-                );
-                if let Err(e) = fs::remove_file(&new_email.maildir_path) {
-                    warn!(
-                        "Could not remove symlink `{}': {e}",
+            if let Err(e) = commit_changes() {
+                // Remove all the symlinks.
+                for new_email in new_emails.values() {
+                    debug!(
+                        "Removing symlink `{}'",
                         &new_email.maildir_path.to_string_lossy(),
                     );
+                    if let Err(e) = fs::remove_file(&new_email.maildir_path) {
+                        warn!(
+                            "Could not remove symlink `{}': {e}",
+                            &new_email.maildir_path.to_string_lossy(),
+                        );
+                    }
                 }
+                // Fail as normal.
+                return Err(e);
             }
-            // Fail as normal.
-            return Err(e);
-        }
 
-        // Now that the atomic database operation has been completed, do the actual file operations.
+            // Now that the atomic database operation has been completed, do the actual file
+            // operations.
 
-        // Replace the symlinks with the real files.
-        for new_email in new_emails.values() {
-            debug!(
-                "Moving mail from `{}' to `{}'",
-                &new_email.cache_path.to_string_lossy(),
-                &new_email.maildir_path.to_string_lossy(),
-            );
-            fs::rename(&new_email.cache_path, &new_email.maildir_path).context(
-                RenameMailFileSnafu {
-                    from: &new_email.cache_path,
-                    to: &new_email.maildir_path,
-                },
-            )?;
-        }
+            // Replace the symlinks with the real files.
+            for new_email in new_emails.values() {
+                debug!(
+                    "Moving mail from `{}' to `{}'",
+                    &new_email.cache_path.to_string_lossy(),
+                    &new_email.maildir_path.to_string_lossy(),
+                );
+                fs::rename(&new_email.cache_path, &new_email.maildir_path).context(
+                    RenameMailFileSnafu {
+                        from: &new_email.cache_path,
+                        to: &new_email.maildir_path,
+                    },
+                )?;
+            }
 
-        // Delete the destroyed email files.
-        for destroyed_local_email in &destroyed_local_emails {
-            fs::remove_file(&destroyed_local_email.path).context(RemoveMailFileSnafu {
-                path: &destroyed_local_email.path,
-            })?;
+            // Delete the destroyed email files.
+            for destroyed_local_email in &destroyed_local_emails {
+                fs::remove_file(&destroyed_local_email.path).context(RemoveMailFileSnafu {
+                    path: &destroyed_local_email.path,
+                })?;
+            }
         }
     }
 
-    // Ensure that for every tag, there exists a corresponding mailbox.
     if !args.dry_run {
+        // Ensure that for every tag, there exists a corresponding mailbox.
         let tags_with_missing_mailboxes: Vec<String> = local
             .all_tags()
             .context(IndexTagsSnafu {})?
@@ -619,14 +631,16 @@ pub fn sync(
                     tags: tags_with_missing_mailboxes,
                 })?;
         }
+    }
 
-        // Update remote messages.
-        stdout.set_color(&info_color_spec).context(LogSnafu {})?;
-        write!(stdout, "Applying changes to JMAP server...").context(LogSnafu {})?;
-        stdout.reset().context(LogSnafu {})?;
-        writeln!(stdout, " ({} changed)", updated_local_emails.len()).context(LogSnafu {})?;
-        stdout.flush().context(LogSnafu {})?;
+    // Update remote messages.
+    stdout.set_color(&info_color_spec).context(LogSnafu {})?;
+    write!(stdout, "Applying changes to JMAP server...").context(LogSnafu {})?;
+    stdout.reset().context(LogSnafu {})?;
+    writeln!(stdout, " ({} changed)", updated_local_emails.len()).context(LogSnafu {})?;
+    stdout.flush().context(LogSnafu {})?;
 
+    if !args.dry_run {
         remote
             .update(&updated_local_emails, &mailboxes, &config.tags)
             .context(PushChangesSnafu {})?;
@@ -636,7 +650,11 @@ pub fn sync(
         // Record the final state for the next invocation.
         LatestState {
             notmuch_revision: Some(local.revision() + 1),
-            jmap_state: Some(state),
+            jmap_state: if pull {
+                Some(state)
+            } else {
+                latest_state.jmap_state
+            },
         }
         .save(latest_state_filename)?;
     }

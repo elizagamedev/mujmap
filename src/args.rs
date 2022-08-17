@@ -32,6 +32,8 @@ pub struct Args {
 
 #[derive(Subcommand, Debug)]
 pub enum Command {
+    /// Push mail without pulling changes.
+    Push,
     /// Synchronize mail.
     Sync,
     /// Send mail.
