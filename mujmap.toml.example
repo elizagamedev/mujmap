@@ -23,7 +23,7 @@ password_command = "pass example@fastmail.com"
 ##
 ## Mutually exclusive with `fqdn`.
 
-# session_url = "https://jmap.fastmail.com/.well-known/jmap
+# session_url = "https://api.fastmail.com/.well-known/jmap"
 
 
 ################################################################################

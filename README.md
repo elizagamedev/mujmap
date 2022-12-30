@@ -189,7 +189,7 @@ the time of writing), you may have recently encountered errors with
 username/password authentication (HTTP Basic Auth). This may be caused by
 Fastmail phasing out username/password-based authentication methods, as
 described in [this blog
-post](https://jmap.topicbox.com/groups/fastmail-dev-beta/Tc47db6ee4fbb5451).
+post](https://jmap.topicbox.com/groups/fastmail-api/Tc47db6ee4fbb5451/).
 
 While this is objectively a good thing, and while it seems the intention was to
 roll this change out slowly, the API endpoint advertised by Fastmail DNS SRV
@@ -202,7 +202,7 @@ options:
   `main` branch revision but not yet in a versioned release.
 - Remove `fqdn` from your config if it's set, and add or change `session_url` to
   explicitly point to the old JMAP endpoint, located at
-  `https://jmap.fastmail.com/.well-known/jmap`.
+  `https://api.fastmail.com/.well-known/jmap`.
 
 If your 401 errors are unrelated to the above situation, try the following
 steps:
