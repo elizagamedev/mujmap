@@ -41,3 +41,4 @@ toml = "0.5.9"
 trust-dns-resolver = "0.21.2"
 ureq = { version = "2.4.0", features = ["json"] }
 uritemplate-next = "0.2.0"
+file-matcher = "0.7.0"

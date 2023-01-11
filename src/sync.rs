@@ -240,14 +240,13 @@ pub fn sync(
         .context(IndexMailboxesSnafu {})?;
     debug!("Got mailboxes: {:?}", mailboxes);
 
-    // Query local database for all email.
-    let local_emails = local.all_emails().context(IndexLocalEmailsSnafu {})?;
-
     // Function which performs a full sync, i.e. a sync which considers all remote IDs as updated,
     // and determines destroyed IDs by finding the difference of all remote IDs from all local IDs.
     let full_sync =
         |remote: &mut Remote| -> Result<(jmap::State, HashSet<jmap::Id>, HashSet<jmap::Id>)> {
             let (state, updated_ids) = remote.all_email_ids().context(IndexRemoteEmailsSnafu {})?;
+            // Query local database for all email.
+            let local_emails = local.all_emails().context(IndexLocalEmailsSnafu {})?;
             // TODO can we optimize these two lines?
             let local_ids: HashSet<jmap::Id> =
                 local_emails.iter().map(|(id, _)| id).cloned().collect();
@@ -265,7 +264,9 @@ pub fn sync(
                     debug!("Remote changes: state={state}, created={created:?}, updated={updated:?}, destroyed={destroyed:?}");
                     // If we have something in the updated set that isn't in the local database,
                     // something must have gone wrong somewhere. Do a full sync instead.
-                    if !updated.iter().all(|x| local_emails.contains_key(x)) {
+                    if !updated.iter()
+                        .inspect(|x| debug!("remote_email: {:?}", x))
+                        .all(|x| local.email_exists_from_id(x)) {
                         warn!(
                             "Server sent an update which references an ID we don't know about, doing a full sync instead");
                         full_sync(&mut remote)
@@ -299,10 +300,8 @@ pub fn sync(
     // Before merging, download the new files into the cache.
     let mut new_emails: HashMap<jmap::Id, NewEmail> = remote_emails
         .values()
-        .filter(|remote_email| match local_emails.get(&remote_email.id) {
-            Some(local_email) => local_email.blob_id != remote_email.blob_id,
-            None => true,
-        })
+        .inspect(|x| debug!("get_emails  : {:?}", local.email_exists_from_id(&x.id)))
+        .filter(|remote_email| !local.email_exists_from_id(&remote_email.id))
         .map(|remote_email| {
             (
                 remote_email.id.clone(),
@@ -317,7 +316,7 @@ pub fn sync(
 
     let new_emails_missing_from_cache: Vec<&NewEmail> = new_emails
         .values()
-        .filter(|x| !x.cache_path.exists() && !local_emails.contains_key(&x.remote_email.id))
+        .filter(|x| !x.cache_path.exists() && !local.email_exists_from_id(&x.remote_email.id))
         .collect();
 
     if !new_emails_missing_from_cache.is_empty() {
@@ -376,7 +375,7 @@ pub fn sync(
     //
     // 5. Overwrite the symlinks we made earlier with the actual files from the cache.
     let notmuch_revision = get_notmuch_revision(
-        local_emails.is_empty(),
+        false, // local_emails.is_empty(),
         &local,
         latest_state.notmuch_revision,
         args.dry_run,
@@ -407,10 +406,16 @@ pub fn sync(
         if !args.dry_run {
             // Collect the local messages which will be destroyed. We will add to this list any
             // messages with new blob IDs.
+            // this query might not even need to run if there are 0 changes
+            debug!("line 415");
+            let local_emails = local.all_emails().context(IndexLocalEmailsSnafu {})?;
             let mut destroyed_local_emails: Vec<&local::Email> = destroyed_ids
                 .into_iter()
+                .inspect(|y| debug!("{:?}", &y))
                 .flat_map(|x| local_emails.get(&x))
                 .collect();
+
+            debug!("{:?}", destroyed_local_emails);
 
             // Symlink the new mail files into the maildir...
             for new_email in new_emails.values() {

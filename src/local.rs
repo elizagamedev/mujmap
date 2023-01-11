@@ -17,6 +17,7 @@ use std::io;
 use std::path::Path;
 use std::path::PathBuf;
 use std::path::StripPrefixError;
+use file_matcher::FileNamed;
 
 const ID_PATTERN: &'static str = r"[-A-Za-z0-9_]+";
 const MAIL_PATTERN: &'static str = formatcp!(r"^({})\.({})(?:$|:)", ID_PATTERN, ID_PATTERN);
@@ -155,6 +156,31 @@ impl Local {
     /// Return all `Email`s that mujmap owns for this maildir.
     pub fn all_emails(&self) -> Result<HashMap<jmap::Id, Email>> {
         self.query(&self.all_mail_query)
+    }
+
+    /// Return a boolean of whether this message exists or not
+    /// We can't look up using msg-id since we have the internal id here
+    /// so we look to see if a file exists where we expect it to and then
+    /// confirm the path in the notmuch database
+
+    /// @TODO: This could just return the message if I could figure out
+    ///        how to do that properly
+    pub fn email_exists_from_id(&self, id: &jmap::Id) -> bool {
+        let f = FileNamed::wildmatch(format!("{}*", id))
+            .within(&self.mail_cur_dir)
+            .find();
+
+        if let Ok(f) = &f {
+            let msg = self.db.find_message_by_filename(&f);
+            if let Ok(Some(msg)) = msg {
+                debug!("message: {:?}", self.emails_from_message(msg));
+                return true;
+            } else {
+            return false;
+            }
+        } else {
+            return false;
+        }
     }
 
     /// Return all `Email`s that mujmap owns which were modified since the given database revision.
