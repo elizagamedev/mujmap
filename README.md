@@ -134,6 +134,7 @@ arguments at the end of the message are ignored, and mujmap will warn you.
 #### Emacs configuration
 ```elisp
 (setq sendmail-program "mujmap"
+      message-send-mail-function #'message-send-mail-with-sendmail
       message-sendmail-extra-arguments '("-C" "/path/to/mujmap/maildir" "send"))
 ```
 
