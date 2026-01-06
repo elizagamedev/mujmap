@@ -250,35 +250,40 @@ impl Remote {
     }
 
     fn open_url(session_url: &str, username: &str, password: &str, timeout: u64) -> Result<Self> {
+        fn encode_basic(username: &str, password: &str) -> String {
+            let safe_username = match username.find(':') {
+                Some(idx) => &username[..idx],
+                None => username,
+            };
+            format!(
+                "Basic {}",
+                base64::encode(format!("{}:{}", safe_username, password))
+            )
+        }
+
         let agent = ureq::AgentBuilder::new()
             .redirect_auth_headers(ureq::RedirectAuthHeaders::SameHost)
             .timeout(Duration::from_secs(timeout))
             .build();
 
-        match agent.get(session_url).call() {
+        let authorization = encode_basic(username, password);
+        match agent
+            .get(session_url)
+            .set("Authorization", &authorization)
+            .call()
+        {
             Ok(r) => {
                 // Server returned success without authentication. Surprising, but valid.
                 let session_url = r.get_url().to_string();
                 let session: jmap::Session = r.into_json().context(ResponseSnafu {})?;
                 Ok(Self {
-                    http_wrapper: HttpWrapper::new(None, timeout),
+                    http_wrapper: HttpWrapper::new(Some(authorization), timeout),
                     session_url,
                     session,
                 })
             }
 
             Err(ureq::Error::Status(code, ref r)) if code == 401 => {
-                fn encode_basic(username: &str, password: &str) -> String {
-                    let safe_username = match username.find(':') {
-                        Some(idx) => &username[..idx],
-                        None => username,
-                    };
-                    format!(
-                        "Basic {}",
-                        base64::encode(format!("{}:{}", safe_username, password))
-                    )
-                }
-
                 let authorization = match r.header("WWW-Authenticate") {
                     Some(v) if v.starts_with("Basic") => {
                         debug!("server offered Basic auth");
@@ -559,6 +564,8 @@ impl Remote {
     pub fn get_mailboxes<'a>(&mut self, tags_config: &config::Tags) -> Result<Mailboxes> {
         const GET_METHOD_ID: &str = "0";
 
+        debug!("got here");
+
         let account_id = &self.session.primary_accounts.mail;
         let mut response = self.request(jmap::Request {
             using: &[jmap::CapabilityKind::Mail],
@@ -575,6 +582,8 @@ impl Remote {
             created_ids: None,
         })?;
         self.update_session_state(&response.session_state)?;
+
+        debug!("got here");
 
         if response.method_responses.len() != 1 {
             return Err(Error::UnexpectedResponse);
